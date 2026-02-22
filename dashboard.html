@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard — Investor Doc Finder</title>
+    <meta name="description" content="Your saved investor documents and search history.">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body class="dark-theme">
+
+    <nav class="navbar">
+        <div class="logo"><a href="index.html">Investor Doc Finder</a></div>
+        <div class="nav-links">
+            <a href="dashboard.html" class="nav-item" style="color:var(--primary-color);">Dashboard</a>
+            <button id="logoutBtn" class="nav-item btn-secondary">Logout</button>
+        </div>
+    </nav>
+
+    <main class="container">
+        <h1>Welcome, <span id="userName">Investor</span></h1>
+
+        <div class="dashboard-layout">
+            <aside class="sidebar">
+                <ul class="sidebar-menu">
+                    <li><a href="#" class="active" id="tabSaved">Saved Documents</a></li>
+                    <li><a href="#" id="tabHistory">Search History</a></li>
+                </ul>
+            </aside>
+
+            <section class="dashboard-content">
+                <!-- Saved Documents Tab -->
+                <div id="savedDocsView">
+                    <h2>Saved Documents</h2>
+                    <div id="savedDocsGrid" class="results-grid">
+                        <p id="savedDocsEmpty" style="color:var(--text-muted);">Loading…</p>
+                    </div>
+                </div>
+
+                <!-- Search History Tab -->
+                <div id="historyView" class="hidden">
+                    <h2>Search History</h2>
+                    <div id="historyList" class="history-list">
+                        <p id="historyEmpty" style="color:var(--text-muted);">Loading…</p>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+    <!-- App Scripts -->
+    <script src="js/app.js"></script>
+    <script src="js/firestore.js"></script>
+
+    <script>
+        // ── Auth guard ─────────────────────────────
+        firebase.auth().onAuthStateChanged(async user => {
+            if (!user) { window.location.href = 'login.html'; return; }
+
+            // Ensure Firestore profile exists
+            await FirestoreService.ensureUserProfile();
+
+            // Load both panels
+            loadSavedDocs();
+            loadHistory();
+        });
+
+        // ── Tab switching ──────────────────────────
+        const tabSaved = document.getElementById('tabSaved');
+        const tabHistory = document.getElementById('tabHistory');
+        const savedView = document.getElementById('savedDocsView');
+        const historyView = document.getElementById('historyView');
+
+        tabSaved.addEventListener('click', e => {
+            e.preventDefault();
+            tabSaved.classList.add('active'); tabHistory.classList.remove('active');
+            savedView.classList.remove('hidden'); historyView.classList.add('hidden');
+        });
+
+        tabHistory.addEventListener('click', e => {
+            e.preventDefault();
+            tabHistory.classList.add('active'); tabSaved.classList.remove('active');
+            historyView.classList.remove('hidden'); savedView.classList.add('hidden');
+        });
+
+        // ── Render saved docs ──────────────────────
+        async function loadSavedDocs() {
+            const grid = document.getElementById('savedDocsGrid');
+            const empty = document.getElementById('savedDocsEmpty');
+
+            try {
+                const docs = await FirestoreService.getSavedDocs();
+
+                if (docs.length === 0) {
+                    empty.textContent = 'No saved documents yet. Search and save some!';
+                    return;
+                }
+
+                empty.style.display = 'none';
+                grid.innerHTML = '';
+
+                docs.forEach(doc => {
+                    const card = document.createElement('div');
+                    card.className = 'doc-card';
+                    card.innerHTML = `
+              <div class="doc-meta">
+                <span class="doc-tag">${escHtml(doc.docType || doc.source || 'Document')}</span>
+                <span>${escHtml(doc.date || '')}</span>
+              </div>
+              <h3 class="doc-title">${escHtml(doc.title)}</h3>
+              <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:0.5rem;">${escHtml(doc.company || '')}</p>
+              <div class="doc-actions">
+                <a href="${escHtml(doc.url)}" target="_blank" rel="noopener" class="btn-primary" style="text-align:center;">Open</a>
+                <button class="btn-outline delete-btn" data-id="${doc.id}">Remove</button>
+              </div>
+            `;
+                    grid.appendChild(card);
+                });
+
+                // Wire delete buttons
+                grid.querySelectorAll('.delete-btn').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        if (!confirm('Remove this document from your saved list?')) return;
+                        await FirestoreService.deleteSavedDoc(btn.dataset.id);
+                        loadSavedDocs();
+                    });
+                });
+            } catch (err) {
+                empty.textContent = 'Error loading saved documents.';
+                console.error(err);
+            }
+        }
+
+        // ── Render search history ──────────────────
+        async function loadHistory() {
+            const list = document.getElementById('historyList');
+            const empty = document.getElementById('historyEmpty');
+
+            try {
+                const searches = await FirestoreService.getSearchHistory();
+
+                if (searches.length === 0) {
+                    empty.textContent = 'No searches yet.';
+                    return;
+                }
+
+                empty.style.display = 'none';
+                list.innerHTML = '';
+
+                searches.forEach(s => {
+                    const row = document.createElement('div');
+                    row.className = 'doc-card';
+                    row.style.cursor = 'pointer';
+
+                    const date = s.searchedAt
+                        ? new Date(s.searchedAt.seconds * 1000).toLocaleString()
+                        : '';
+
+                    row.innerHTML = `
+              <div class="doc-meta">
+                <span>${escHtml(date)}</span>
+                <span>${s.resultsCount || 0} results</span>
+              </div>
+              <h3 class="doc-title">${escHtml(s.query)}</h3>
+            `;
+
+                    row.addEventListener('click', () => {
+                        window.location.href = 'results.html?q=' + encodeURIComponent(s.query);
+                    });
+
+                    list.appendChild(row);
+                });
+            } catch (err) {
+                empty.textContent = 'Error loading history.';
+                console.error(err);
+            }
+        }
+
+        // ── Utility ────────────────────────────────
+        function escHtml(str) {
+            const d = document.createElement('div');
+            d.textContent = str || '';
+            return d.innerHTML;
+        }
+    </script>
+</body>
+
+</html>

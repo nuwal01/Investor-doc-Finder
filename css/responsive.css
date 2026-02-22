@@ -1,0 +1,44 @@
+@media (max-width: 768px) {
+    h1 {
+        font-size: 2.2rem;
+    }
+
+    h2 {
+        font-size: 1.5rem;
+    }
+
+    .navbar {
+        flex-direction: column;
+        gap: 1rem;
+        padding: 1rem 5%;
+    }
+
+    .nav-links {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .dashboard-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .sidebar {
+        width: 100%;
+        padding: 1rem;
+    }
+
+    .sidebar-menu {
+        display: flex;
+        overflow-x: auto;
+        gap: 1rem;
+    }
+
+    .sidebar-menu li {
+        margin-bottom: 0;
+        white-space: nowrap;
+    }
+
+    .results-header .search-container {
+        width: 100%;
+    }
+}

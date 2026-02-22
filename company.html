@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Company Filings — Investor Doc Finder</title>
+    <meta name="description" content="View all filings and reports for a specific public company.">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body class="dark-theme">
+
+    <nav class="navbar">
+        <div class="logo"><a href="index.html">Investor Doc Finder</a></div>
+        <div class="nav-links">
+            <a href="dashboard.html" class="nav-item auth-required hidden" style="display:none;">Dashboard</a>
+            <a href="login.html" id="loginBtn" class="nav-item btn-primary">Login</a>
+            <button id="logoutBtn" class="nav-item btn-secondary hidden" style="display:none;">Logout</button>
+        </div>
+    </nav>
+
+    <main class="container">
+        <div style="margin-bottom:2rem;">
+            <a href="index.html" style="color:var(--primary-color)">← Back to Search</a>
+        </div>
+
+        <div class="company-header"
+            style="background:var(--card-bg);padding:2rem;border-radius:1rem;border:1px solid var(--border-color);margin-bottom:2rem;">
+            <h1 id="companyName">Loading Company…</h1>
+            <p id="companyTicker" class="doc-tag" style="display:inline-block;font-size:1.2rem;"></p>
+        </div>
+
+        <div class="results-info">
+            <h2>Recent Filings &amp; Earnings</h2>
+        </div>
+
+        <div id="loadingIndicator" class="results-loader">
+            <div class="loader"></div>
+        </div>
+
+        <div id="companyDocsGrid" class="results-grid hidden">
+            <!-- Populated by JS -->
+        </div>
+    </main>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+    <!-- App Scripts -->
+    <script src="js/app.js"></script>
+    <script src="js/firestore.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "functions",
+  "version": "1.0.0",
+  "description": "Investor Doc Finder – Cloud Functions",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "serve": "firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "firebase-admin": "^13.6.1",
+    "firebase-functions": "^7.0.5",
+    "node-fetch": "^2.7.0"
+  }
+}
