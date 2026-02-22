@@ -13,5 +13,14 @@
   "type": "commonjs",
   "dependencies": {
     "node-fetch": "^2.7.0"
-  }
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nuwal01/Investor-doc-Finder.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nuwal01/Investor-doc-Finder/issues"
+  },
+  "homepage": "https://github.com/nuwal01/Investor-doc-Finder#readme"
 }

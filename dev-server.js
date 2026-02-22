@@ -28,7 +28,7 @@ const { parseQuery } = require("./functions/parseQuery");
 const { searchEdgar } = require("./functions/searchEdgar");
 const { searchSerper } = require("./functions/searchSerper");
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // MIME types
 const MIME = {
