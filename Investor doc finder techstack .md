@@ -193,46 +193,46 @@ exports.searchDocuments = functions.https.onCall(async (data, context) => {
 | **Key Storage** | Firebase Cloud Functions environment variable (never in frontend) |
 
 ### Smart Query Strategy
-```javascript
-// How to build the search query for best results
-function buildQuery(userInput) {
-  // "Tesla Q3 2024 earnings" becomes:
-  return `${userInput} filetype:pdf OR annual report OR 10-Q OR 10-K investor relations`;
-}
-
-// For specific SEC filings:
-// "Tesla 10-K 2023 site:sec.gov"
-```
+Each document type gets a **targeted search query**:
+| Doc Type | Query Built |
+|----------|-------------|
+| 10-K | `"Apple" 10-K annual report filetype:pdf site:sec.gov` |
+| 10-Q | `"Apple" 10-Q quarterly report filetype:pdf site:sec.gov` |
+| Investor Presentation | `"Apple" investor presentation filetype:pdf` |
+| Earnings | `"Apple" earnings report filetype:pdf` |
+| Proxy | `"Apple" proxy statement DEF 14A filetype:pdf site:sec.gov` |
 
 ### What Serper Finds
-- SEC filings (US companies)
-- Annual reports (global companies)
-- Earnings presentations (PDFs)
-- Investor relations pages
-- Quarterly reports
-- IPO prospectuses (S-1)
+- Investor presentation PDFs (from company IR pages)
+- Earnings report PDFs
+- Annual reports from annualreports.com
+- Global company filings (non-US)
+- Quarterly results (non-SEC sources)
 
 ---
 
-## 6. 🇺🇸 US Filings — SEC EDGAR API
+## 6. 🇺🇸 US Filings — SEC EDGAR Submissions API
 
 | Detail | Value |
 |--------|-------|
-| **Purpose** | Direct official US SEC filings (10-K, 10-Q, 8-K, etc.) |
+| **Purpose** | Fetch **actual filing documents** (PDFs) for US companies |
 | **Cost** | Completely FREE — no API key needed |
-| **Rate Limit** | 10 requests/second (more than enough) |
-| **Official Source** | https://efts.sec.gov & https://data.sec.gov |
+| **Rate Limit** | 10 requests/second |
+| **Official Source** | https://data.sec.gov |
 
-### Key Endpoints
-```javascript
-// Search filings by company name
-GET https://efts.sec.gov/LATEST/search-index?q="Tesla"&dateRange=custom&startdt=2024-01-01
+### How It Works (3-Step Process)
+```
+Step 1: Ticker → CIK
+  GET https://www.sec.gov/files/company_tickers.json
+  "AAPL" → CIK 320193
 
-// Get all filings for a company by CIK number
-GET https://data.sec.gov/submissions/CIK0001318605.json
+Step 2: CIK → All Filings
+  GET https://data.sec.gov/submissions/CIK0000320193.json
+  Returns: form types, dates, accession numbers, primary documents
 
-// Full text search
-GET https://efts.sec.gov/LATEST/search-index?q="Tesla"&forms=10-K,10-Q
+Step 3: Build Direct Document URL
+  https://www.sec.gov/Archives/edgar/data/320193/{accession}/{primaryDoc}
+  → Opens the actual 10-K PDF / HTML filing
 ```
 
 ### Filing Types Supported

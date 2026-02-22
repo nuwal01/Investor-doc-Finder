@@ -2,15 +2,15 @@
 // app.js  –  Shared initialisation & helpers
 // ──────────────────────────────────────────────
 
-// ⚠️  REPLACE these values with your real Firebase project config.
-//     You can find them in Firebase Console → Project Settings → Your apps.
+// Firebase project config (from Firebase Console → Project Settings → Your apps)
 const firebaseConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    projectId: "YOUR_PROJECT",
-    storageBucket: "YOUR_PROJECT.appspot.com",
-    messagingSenderId: "000000000000",
-    appId: "1:000000000000:web:0000000000000000"
+    apiKey: "AIzaSyCAaWur6dOtV4CuoPqJpOqp4zs3GWap9E8",
+    authDomain: "investor-doc-finder.firebaseapp.com",
+    projectId: "investor-doc-finder",
+    storageBucket: "investor-doc-finder.firebasestorage.app",
+    messagingSenderId: "615109960564",
+    appId: "1:615109960564:web:904b07e37729cb068ac221",
+    measurementId: "G-61DVJJB6R6"
 };
 
 // Initialise Firebase (compat SDK loaded via CDN)

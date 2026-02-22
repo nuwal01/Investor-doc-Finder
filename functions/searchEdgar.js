@@ -1,111 +1,203 @@
 // ──────────────────────────────────────────────
-// searchEdgar.js  –  SEC EDGAR Full-Text Search
+// searchEdgar.js  –  SEC EDGAR Submissions API
 // ──────────────────────────────────────────────
-// Free API — no key required.
-// Docs: https://efts.sec.gov/LATEST/search-index?q=...
-// User-Agent header required by SEC fair-use policy.
+// Fetches ACTUAL company filings with PDF links when available.
+// 1. Ticker → CIK (via company_tickers.json)
+// 2. CIK → Filings (via Submissions API)
+// 3. For each filing → check index.json for PDF documents
 
 const fetch = require("node-fetch");
 
-const EDGAR_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index";
-const EDGAR_FILING_URL = "https://www.sec.gov/cgi-bin/browse-edgar";
 const USER_AGENT = "InvestorDocFinder/1.0 (contact@investordocfinder.com)";
 
+// ── Ticker → CIK cache ──
+let tickerMap = null;
+
+async function loadTickerMap() {
+    if (tickerMap) return tickerMap;
+    const res = await fetch("https://www.sec.gov/files/company_tickers.json", {
+        headers: { "User-Agent": USER_AGENT }
+    });
+    if (!res.ok) throw new Error("Failed to load SEC ticker map");
+    const data = await res.json();
+    tickerMap = {};
+    for (const key of Object.keys(data)) {
+        const entry = data[key];
+        tickerMap[(entry.ticker || "").toUpperCase()] = {
+            cik: entry.cik_str,
+            name: entry.title
+        };
+    }
+    return tickerMap;
+}
+
+async function findCIK(ticker) {
+    const map = await loadTickerMap();
+    return map[ticker.toUpperCase()] || null;
+}
+
 /**
- * Search SEC EDGAR for filings.
- * @param {{ company:string, ticker:string, docType:string, year:string }} parsed
- * @returns {Promise<Array<{title,url,type,company,date,source}>>}
+ * For a given filing, fetch the filing index and find a PDF document.
+ * Returns the PDF URL if found, otherwise returns the original URL.
  */
-async function searchEdgar(parsed) {
+async function findPdfUrl(cik, accessionClean, originalUrl) {
     try {
-        // Build search query
-        const queryParts = [];
-        if (parsed.ticker) queryParts.push(parsed.ticker);
-        else if (parsed.company) queryParts.push(parsed.company);
-        if (parsed.docType && parsed.docType !== "earnings") queryParts.push(parsed.docType);
-        if (parsed.year) queryParts.push(parsed.year);
+        // Filing index JSON: lists all documents in the filing
+        const accessionDashes = accessionClean.replace(
+            /^(\d{10})(\d{2})(\d+)$/, '$1-$2-$3'
+        );
+        const indexUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionClean}/index.json`;
 
-        const q = queryParts.join(" ");
-
-        // Determine form types for the query
-        let forms = "";
-        if (parsed.docType && parsed.docType !== "earnings") {
-            forms = `&forms=${encodeURIComponent(parsed.docType)}`;
-        }
-
-        // Date range filter
-        let dateRange = "";
-        if (parsed.year) {
-            dateRange = `&dateRange=custom&startdt=${parsed.year}-01-01&enddt=${parsed.year}-12-31`;
-        }
-
-        const url = `https://efts.sec.gov/LATEST/search-index?q=${encodeURIComponent(q)}${forms}${dateRange}&from=0&size=10`;
-
-        const response = await fetch(url, {
+        const res = await fetch(indexUrl, {
             headers: { "User-Agent": USER_AGENT, "Accept": "application/json" }
         });
 
-        if (!response.ok) {
-            // Fallback: try the full-text search API
-            return await searchEdgarFullText(parsed);
+        if (!res.ok) return originalUrl;
+
+        const data = await res.json();
+        const items = (data.directory && data.directory.item) || [];
+
+        // Look for PDF files (prefer larger PDFs — they're the actual report)
+        const pdfs = items
+            .filter(item => item.name && item.name.toLowerCase().endsWith('.pdf'))
+            .sort((a, b) => (parseInt(b.size) || 0) - (parseInt(a.size) || 0));
+
+        if (pdfs.length > 0) {
+            // Return the largest PDF (usually the full filing)
+            return `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionClean}/${pdfs[0].name}`;
         }
 
-        const data = await response.json();
-        const hits = (data.hits && data.hits.hits) || [];
-
-        return hits.map(hit => {
-            const src = hit._source || {};
-            return {
-                title: src.display_names ? src.display_names.join(", ") : (src.file_description || `SEC Filing`),
-                url: `https://www.sec.gov/Archives/edgar/data/${src.entity_id}/${src.file_name || ""}`,
-                type: src.form_type || parsed.docType || "Filing",
-                company: src.display_names ? src.display_names[0] : (parsed.company || ""),
-                date: src.file_date || src.period_of_report || "",
-                source: "SEC EDGAR"
-            };
-        });
+        return originalUrl;
     } catch (err) {
-        console.error("EDGAR search error:", err.message);
-        return await searchEdgarFullText(parsed);
+        return originalUrl;
     }
 }
 
 /**
- * Fallback: Use EDGAR full-text search (EFTS) API
+ * Main: Search SEC EDGAR for actual company filings with PDF links.
  */
-async function searchEdgarFullText(parsed) {
+async function searchEdgar(parsed) {
     try {
-        const queryParts = [];
-        if (parsed.company) queryParts.push(`"${parsed.company}"`);
-        if (parsed.ticker) queryParts.push(parsed.ticker);
-        if (parsed.docType && parsed.docType !== "earnings") queryParts.push(parsed.docType);
+        if (!parsed.ticker) {
+            console.log("   EDGAR: No ticker found, skipping.");
+            return [];
+        }
 
-        const q = queryParts.join(" ");
+        // Step 1: Resolve ticker → CIK
+        const company = await findCIK(parsed.ticker);
+        if (!company) {
+            console.log(`   EDGAR: Ticker "${parsed.ticker}" not found.`);
+            return [];
+        }
 
-        const url = `https://efts.sec.gov/LATEST/search-index?q=${encodeURIComponent(q)}&from=0&size=10`;
+        const cik = String(company.cik);
+        const cikPadded = cik.padStart(10, "0");
+        const companyName = company.name;
+        console.log(`   EDGAR: Found ${companyName} (CIK: ${cik})`);
 
-        const response = await fetch(url, {
+        // Step 2: Fetch filings list
+        const subUrl = `https://data.sec.gov/submissions/CIK${cikPadded}.json`;
+        const res = await fetch(subUrl, {
             headers: { "User-Agent": USER_AGENT, "Accept": "application/json" }
         });
+        if (!res.ok) return [];
 
-        if (!response.ok) return [];
+        const data = await res.json();
+        const recent = data.filings && data.filings.recent;
+        if (!recent) return [];
 
-        const data = await response.json();
-        const hits = (data.hits && data.hits.hits) || [];
+        // Step 3: Filter filings by form type and year
+        const targetForm = (parsed.docType || "").toUpperCase();
+        const targetYear = parsed.year || "";
+        const matchedFilings = [];
 
-        return hits.map(hit => {
-            const src = hit._source || {};
+        for (let i = 0; i < recent.form.length && matchedFilings.length < 5; i++) {
+            const form = recent.form[i];
+            const filingDate = recent.filingDate[i] || "";
+            const accession = recent.accessionNumber[i] || "";
+            const primaryDoc = recent.primaryDocument[i] || "";
+            const primaryDesc = recent.primaryDocDescription[i] || "";
+
+            // Filter by form type — EXACT match only (allow amendments too)
+            if (targetForm && targetForm !== "EARNINGS") {
+                const formUpper = form.toUpperCase().replace(/\s/g, "");
+                const target = targetForm.replace(/\s/g, "");
+                // Match exact form or amendment (e.g. 10-K matches 10-K and 10-K/A)
+                if (formUpper !== target && formUpper !== target + "/A") continue;
+            }
+
+            // Filter by year
+            if (targetYear && !filingDate.startsWith(targetYear)) continue;
+
+            const accessionClean = accession.replace(/-/g, "");
+            const htmlUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionClean}/${primaryDoc}`;
+
+            matchedFilings.push({
+                form, filingDate, accessionClean, primaryDoc, primaryDesc, htmlUrl,
+                companyName, cik
+            });
+        }
+
+        // Step 4: For each matched filing, check for PDF version (in parallel)
+        console.log(`   EDGAR: Checking ${matchedFilings.length} filings for PDFs...`);
+
+        const results = await Promise.all(matchedFilings.map(async (filing) => {
+            const pdfUrl = await findPdfUrl(filing.cik, filing.accessionClean, filing.htmlUrl);
+            const isPdf = pdfUrl.toLowerCase().endsWith('.pdf');
+
             return {
-                title: src.display_names ? src.display_names.join(", ") : `SEC Filing`,
-                url: `https://www.sec.gov/Archives/edgar/data/${src.entity_id || ""}/${src.file_name || ""}`,
-                type: src.form_type || parsed.docType || "Filing",
-                company: src.display_names ? src.display_names[0] : (parsed.company || ""),
-                date: src.file_date || "",
-                source: "SEC EDGAR"
+                title: `${filing.companyName} — ${filing.form} (${filing.filingDate})`,
+                url: pdfUrl,
+                type: filing.form,
+                company: filing.companyName,
+                ticker: parsed.ticker,
+                date: filing.filingDate,
+                source: "SEC EDGAR",
+                description: isPdf
+                    ? `📄 PDF — ${filing.primaryDesc || filing.form + ' filing'}`
+                    : `📃 HTML — ${filing.primaryDesc || filing.form + ' filing'}`,
+                format: isPdf ? "PDF" : "HTML"
             };
-        });
+        }));
+
+        // If no results with filters, try without year filter
+        if (results.length === 0 && targetForm) {
+            console.log(`   EDGAR: No ${targetForm} in ${targetYear}, trying all years...`);
+            const fallback = [];
+            for (let i = 0; i < recent.form.length && fallback.length < 3; i++) {
+                const form = recent.form[i];
+                const formUpper = form.toUpperCase().replace(/\s/g, "");
+                const target = targetForm.replace(/\s/g, "");
+                if (formUpper !== target && formUpper !== target + "/A") continue;
+
+                const accessionClean = recent.accessionNumber[i].replace(/-/g, "");
+                const primaryDoc = recent.primaryDocument[i] || "";
+                const htmlUrl = `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionClean}/${primaryDoc}`;
+                const pdfUrl = await findPdfUrl(cik, accessionClean, htmlUrl);
+                const isPdf = pdfUrl.toLowerCase().endsWith('.pdf');
+
+                fallback.push({
+                    title: `${companyName} — ${form} (${recent.filingDate[i]})`,
+                    url: pdfUrl,
+                    type: form,
+                    company: companyName,
+                    ticker: parsed.ticker,
+                    date: recent.filingDate[i],
+                    source: "SEC EDGAR",
+                    description: isPdf
+                        ? `📄 PDF — ${recent.primaryDocDescription[i] || form + ' filing'}`
+                        : `📃 HTML — ${recent.primaryDocDescription[i] || form + ' filing'}`,
+                    format: isPdf ? "PDF" : "HTML"
+                });
+            }
+            return fallback;
+        }
+
+        console.log(`   EDGAR: Returning ${results.length} results (${results.filter(r => r.format === 'PDF').length} PDFs)`);
+        return results;
+
     } catch (err) {
-        console.error("EDGAR fulltext fallback error:", err.message);
+        console.error("   EDGAR search error:", err.message);
         return [];
     }
 }

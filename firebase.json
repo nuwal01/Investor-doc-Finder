@@ -4,7 +4,13 @@
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      ".env",
+      "dev-server.js",
+      "functions/**",
+      "*.md",
+      "package.json",
+      "package-lock.json"
     ]
   },
   "functions": {

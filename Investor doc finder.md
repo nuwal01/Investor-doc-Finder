@@ -66,22 +66,22 @@ Finding official financial documents today is painful:
 - Keyboard navigable (arrow keys + enter)
 
 ### 4.3 🇺🇸 SEC EDGAR Integration (US Companies)
-- Direct connection to official SEC EDGAR database
+- Uses SEC **Submissions API** to fetch a company's **actual filings** with direct PDF/document links
+- Flow: Ticker → CIK Lookup → Submissions API → Filter by form type & year → Direct document URLs
 - Zero cost — EDGAR API is completely free
+- Links point directly to the actual filing document on sec.gov
 - Supports all major filing types:
 
 | Filing | Description |
 |--------|-------------|
-| 10-K | Annual Report |
-| 10-Q | Quarterly Report |
+| 10-K | Annual Report (PDF) |
+| 10-Q | Quarterly Report (PDF) |
 | 8-K | Material Events / Earnings Release |
 | DEF 14A | Proxy Statement (shareholder vote) |
 | S-1 | IPO Registration Statement |
 | 20-F | Annual Report (Foreign Private Issuer) |
-| 6-K | Periodic Report (Foreign Private Issuer) |
-| 4 | Insider Trading Report |
 
-- Results show: Filing type · Date filed · Period covered · Direct link
+- Results show: Company name · Filing type · Ticker badge · Date filed · Direct document link
 - For US companies, EDGAR results appear first before Serper results
 
 ### 4.4 🌍 Global Company Support (via Serper API)
@@ -332,15 +332,16 @@ searchHistory/{uid}/searches/{searchId}
 | Key Location | Cloud Functions env variable only |
 | Query Example | `"Samsung 2024 annual report filetype:pdf"` |
 
-### SEC EDGAR API
+### SEC EDGAR API (Submissions API)
 | Detail | Info |
 |--------|------|
-| Website | https://efts.sec.gov |
-| Purpose | Official US company filings |
+| Website | https://data.sec.gov |
+| Purpose | Fetch actual filing documents (PDFs) for US companies |
 | Cost | Completely FREE — no key needed |
 | Rate Limit | 10 requests/second |
-| Search URL | `https://efts.sec.gov/LATEST/search-index?q={company}&forms={type}` |
-| Company URL | `https://data.sec.gov/submissions/CIK{number}.json` |
+| Ticker Map | `https://www.sec.gov/files/company_tickers.json` → maps ticker to CIK |
+| Submissions | `https://data.sec.gov/submissions/CIK{number}.json` → actual filings list |
+| Document URL | `https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{primaryDoc}` |
 
 ### Firebase (All Services)
 | Detail | Info |

@@ -8,9 +8,13 @@
 document.addEventListener('DOMContentLoaded', () => {
 
     // ── Configuration ──────────────────────────
-    // ⚠️  REPLACE with your deployed Cloud Function URL after firebase deploy.
-    //     During local emulator testing use: http://127.0.0.1:5001/YOUR_PROJECT/us-central1/searchDocuments
-    const FUNCTION_URL = 'https://us-central1-YOUR_PROJECT.cloudfunctions.net/searchDocuments';
+    // Auto-detect: local dev server vs deployed Cloud Function
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+    // ⚠️  REPLACE the production URL with your deployed Cloud Function URL after firebase deploy.
+    const FUNCTION_URL = isLocal
+        ? `${window.location.origin}/api/searchDocuments`
+        : 'https://us-central1-investor-doc-finder.cloudfunctions.net/searchDocuments';
 
     // ── DOM refs ───────────────────────────────
     const searchTitle = document.getElementById('searchTitle');
@@ -59,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const results = data.results || [];
 
             // Record search in Firestore (if user is logged in)
-            if (typeof FirestoreService !== 'undefined' && auth.currentUser) {
+            if (typeof FirestoreService !== 'undefined' && typeof auth !== 'undefined' && auth.currentUser) {
                 FirestoreService.recordSearch(q, results.length).catch(() => { });
             }
 
@@ -93,16 +97,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const card = document.createElement('div');
             card.className = 'doc-card';
             card.style.animationDelay = `${idx * 0.05}s`;
+
+            const tickerBadge = doc.ticker
+                ? `<span class="doc-tag" style="background:var(--primary-color);color:#fff;">${escHtml(doc.ticker)}</span>`
+                : '';
+
             card.innerHTML = `
         <div class="doc-meta">
           <span class="doc-tag">${escHtml(doc.type || 'Document')}</span>
+          ${tickerBadge}
           <span>${escHtml(doc.source || '')}</span>
         </div>
         <h3 class="doc-title">${escHtml(doc.title || 'Untitled')}</h3>
-        <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.25rem;">
+        <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem;">
           ${escHtml(doc.company || '')}${doc.date ? ' · ' + escHtml(doc.date) : ''}
         </p>
-        <div class="doc-actions">
+        ${doc.description ? `<p style="color:var(--text-muted);font-size:0.8rem;margin-bottom:0.75rem;opacity:0.7;">${escHtml(doc.description).substring(0, 150)}${doc.description.length > 150 ? '…' : ''}</p>` : ''}
+        <div class="doc-actions" style="margin-top:auto;">
           <a href="${escHtml(doc.url)}" target="_blank" rel="noopener" class="btn-primary">Open</a>
           <button class="btn-outline download-btn" data-url="${escHtml(doc.url)}" data-title="${escHtml(doc.title)}">Download</button>
           <button class="btn-outline save-btn"

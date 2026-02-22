@@ -68,6 +68,13 @@
     <script src="js/autocomplete.js"></script>
     <script src="js/download.js"></script>
     <script src="js/search.js"></script>
+
+    <!-- Auth guard: must be signed in to search -->
+    <script>
+        firebase.auth().onAuthStateChanged(user => {
+            if (!user) window.location.href = 'login.html';
+        });
+    </script>
 </body>
 
 </html>

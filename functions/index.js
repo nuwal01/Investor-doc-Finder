@@ -42,12 +42,29 @@ exports.searchDocuments = functions.https.onRequest((req, res) => {
 
             // Merge, de-duplicate by URL
             const seen = new Set();
-            const results = [];
+            const allResults = [];
 
-            for (const doc of [...edgarResults, ...serperResults]) {
+            // Serper first (likely has PDFs), then EDGAR
+            for (const doc of [...serperResults, ...edgarResults]) {
                 if (!doc.url || seen.has(doc.url)) continue;
                 seen.add(doc.url);
-                results.push(doc);
+                allResults.push(doc);
+            }
+
+            // Separate PDFs from HTML
+            const pdfResults = allResults.filter(r => r.url.toLowerCase().endsWith('.pdf'));
+            const htmlResults = allResults.filter(r => !r.url.toLowerCase().endsWith('.pdf'));
+
+            // Show ONLY PDFs. If none found, fall back to HTML with a note.
+            let results;
+            if (pdfResults.length > 0) {
+                results = pdfResults;
+            } else {
+                // No PDFs found — show HTML results but mark them
+                results = htmlResults.map(r => ({
+                    ...r,
+                    description: "⚠️ No PDF available — " + (r.description || "HTML document")
+                }));
             }
 
             return res.status(200).json({

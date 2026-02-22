@@ -1,12 +1,11 @@
 // ──────────────────────────────────────────────
-// download.js  –  Open in tab + one-click download
+// download.js  –  Open in tab + download handler
 // ──────────────────────────────────────────────
 
 const DownloadService = (() => {
 
     /**
      * Open a document URL in a new tab.
-     * @param {string} url
      */
     function openInTab(url) {
         if (!url) return;
@@ -14,45 +13,36 @@ const DownloadService = (() => {
     }
 
     /**
-     * Trigger a download for the given URL.
-     * For PDFs and other same-origin files the browser will download directly.
-     * For cross-origin files we open in a new tab (browser decides download vs display).
-     * @param {string} url
-     * @param {string} filename  – Suggested file name
+     * Download a document. For cross-origin files (sec.gov, etc.)
+     * browsers block forced downloads. In that case we open in a new
+     * tab and show a toast with Ctrl+S / Print-to-PDF tip.
      */
     function download(url, filename) {
         if (!url) return;
 
-        // Try using an anchor with download attribute
-        const a = document.createElement('a');
-        a.href = url;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
+        // Check if it's a same-origin URL (rare in our case)
+        const isSameOrigin = url.startsWith(window.location.origin);
 
-        // If we can suggest a filename, do so
-        if (filename) {
-            // Clean the filename for safe filesystem use
-            const safe = filename
-                .replace(/[^a-zA-Z0-9\s\-_.()]/g, '')
-                .trim()
-                .substring(0, 100);
-            a.download = safe.endsWith('.pdf') ? safe : safe + '.pdf';
+        if (isSameOrigin) {
+            // Same origin: force download via blob
+            forceDownload(url, filename);
+            return;
         }
 
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        // Cross-origin (sec.gov, etc.): open in new tab + show tip
+        window.open(url, '_blank', 'noopener,noreferrer');
+
+        if (typeof showToast === 'function') {
+            showToast('Document opened — press Ctrl+S to save, or Print → Save as PDF');
+        }
     }
 
     /**
-     * Try to fetch the file as a blob and trigger a true download.
-     * Falls back to the simple method if CORS blocks us.
-     * @param {string} url
-     * @param {string} filename
+     * Force download via blob (only works for same-origin or CORS-enabled URLs).
      */
     async function forceDownload(url, filename) {
         try {
-            const response = await fetch(url, { mode: 'cors' });
+            const response = await fetch(url);
             if (!response.ok) throw new Error('Fetch failed');
 
             const blob = await response.blob();
@@ -60,24 +50,32 @@ const DownloadService = (() => {
 
             const a = document.createElement('a');
             a.href = blobUrl;
-            a.download = filename || 'document.pdf';
+
+            // Clean filename
+            const safe = (filename || 'document')
+                .replace(/[^a-zA-Z0-9\s\-_.()]/g, '')
+                .trim()
+                .substring(0, 100);
+            a.download = safe.endsWith('.pdf') ? safe : safe + '.pdf';
+
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
 
-            // Clean up
             setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+
+            if (typeof showToast === 'function') {
+                showToast('Download started!');
+            }
         } catch (err) {
-            // Fallback: opening in a new tab if CORS prevents blob download
-            console.warn('Blob download failed, falling back to open:', err.message);
-            download(url, filename);
+            // Fallback: open in new tab
+            console.warn('Blob download failed:', err.message);
+            window.open(url, '_blank', 'noopener,noreferrer');
+            if (typeof showToast === 'function') {
+                showToast('Document opened — press Ctrl+S to save, or Print → Save as PDF');
+            }
         }
     }
 
-    // Public API
-    return {
-        openInTab,
-        download,
-        forceDownload
-    };
+    return { openInTab, download, forceDownload };
 })();

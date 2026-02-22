@@ -10,6 +10,153 @@
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="css/responsive.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Landing page specific styles */
+        .landing-hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 2rem;
+            background: radial-gradient(ellipse at 50% 0%, rgba(59, 130, 246, 0.15) 0%, transparent 60%);
+        }
+
+        .landing-hero h1 {
+            font-size: 3.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #ffffff 0%, #93c5fd 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .landing-hero .subtitle {
+            font-size: 1.25rem;
+            color: var(--text-muted);
+            max-width: 600px;
+            margin: 0 auto 2.5rem;
+            line-height: 1.7;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 3rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .cta-buttons .btn-primary {
+            padding: 1rem 2.5rem;
+            font-size: 1.1rem;
+            border-radius: 0.75rem;
+        }
+
+        .cta-buttons .btn-secondary {
+            padding: 1rem 2.5rem;
+            font-size: 1.1rem;
+            border-radius: 0.75rem;
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+        }
+
+        .cta-buttons .btn-secondary:hover {
+            border-color: var(--primary-color);
+            color: #fff;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            max-width: 900px;
+            margin: 0 auto 3rem;
+        }
+
+        .feature-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            text-align: left;
+            transition: border-color 0.2s ease;
+        }
+
+        .feature-card:hover {
+            border-color: var(--primary-color);
+        }
+
+        .feature-card .icon {
+            font-size: 1.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .feature-card h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .feature-card p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .supported-docs {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+
+        .doc-badge {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: var(--primary-color);
+            padding: 0.4rem 1rem;
+            border-radius: 2rem;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        /* Logged-in state: show search bar */
+        .search-section {
+            display: none;
+        }
+
+        .search-section.active {
+            display: block;
+        }
+
+        .landing-cta {
+            display: block;
+        }
+
+        .landing-cta.hide {
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .landing-hero h1 {
+                font-size: 2.2rem;
+            }
+
+            .landing-hero .subtitle {
+                font-size: 1rem;
+            }
+
+            .cta-buttons .btn-primary,
+            .cta-buttons .btn-secondary {
+                padding: 0.75rem 1.5rem;
+                font-size: 1rem;
+            }
+        }
+    </style>
 </head>
 
 <body class="dark-theme">
@@ -24,13 +171,34 @@
         </div>
     </nav>
 
-    <!-- Hero -->
-    <main class="hero-section">
-        <div class="hero-content">
-            <h1>Find Investor Documents&nbsp;Fast</h1>
-            <p>Search global company filings, earnings reports, and more.</p>
+    <!-- Hero / Landing -->
+    <main class="landing-hero">
+        <h1>Find Investor Documents Fast</h1>
+        <p class="subtitle">
+            Search and download 10-K annual reports, 10-Q quarterly reports,
+            investor presentations, and earnings reports for any public company — in PDF.
+        </p>
 
-            <div class="search-container">
+        <!-- Supported document badges -->
+        <div class="supported-docs">
+            <span class="doc-badge">📄 10-K Annual Reports</span>
+            <span class="doc-badge">📊 10-Q Quarterly</span>
+            <span class="doc-badge">📈 Investor Presentations</span>
+            <span class="doc-badge">💰 Earnings Reports</span>
+            <span class="doc-badge">📋 Proxy Statements</span>
+        </div>
+
+        <!-- CTA for non-logged-in users -->
+        <div class="landing-cta" id="landingCta">
+            <div class="cta-buttons">
+                <a href="login.html" class="btn-primary">Sign In to Start Searching</a>
+                <a href="login.html" class="btn-secondary">Create Account</a>
+            </div>
+        </div>
+
+        <!-- Search bar for logged-in users -->
+        <div class="search-section" id="searchSection">
+            <div class="search-container" style="max-width:700px;width:100%;">
                 <form id="searchForm" autocomplete="off" action="results.html">
                     <div class="search-input-wrapper">
                         <input type="text" id="searchInput" name="q"
@@ -47,11 +215,34 @@
                 </form>
                 <div id="autocompleteResults" class="autocomplete-dropdown hidden"></div>
             </div>
+            <p style="color:var(--text-muted);margin-top:1rem;font-size:0.9rem;">
+                Supports SEC EDGAR (US) &amp; Global Companies &middot; Direct PDF links
+            </p>
+        </div>
 
-            <div class="trusted-by">
-                <p>Supports SEC EDGAR &amp; Global Company Registries</p>
+        <!-- Features -->
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="icon">🔍</div>
+                <h3>Smart Search</h3>
+                <p>Type naturally — "Apple 10-K 2024" or "Tesla earnings Q3" and get the exact document.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">📄</div>
+                <h3>Direct PDF Links</h3>
+                <p>Get links to actual filing PDFs from SEC EDGAR — no more digging through HTML pages.</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">💾</div>
+                <h3>Save & Organize</h3>
+                <p>Save documents to your personal dashboard and track your search history.</p>
             </div>
         </div>
+
+        <!-- Coming soon -->
+        <p style="color:var(--text-muted); font-size:0.85rem; margin-top:1.5rem; opacity:0.7; font-style:italic;">
+            🚀 Coming soon — Support for Indian companies (BSE/NSE), UK, and other global public company filings.
+        </p>
     </main>
 
     <!-- Firebase SDK (compat) -->
@@ -64,6 +255,21 @@
     <script src="js/app.js"></script>
     <script src="js/firestore.js"></script>
     <script src="js/autocomplete.js"></script>
+
+    <script>
+        // Show search bar if logged in, otherwise show CTA
+        firebase.auth().onAuthStateChanged(user => {
+            const cta = document.getElementById('landingCta');
+            const search = document.getElementById('searchSection');
+            if (user) {
+                cta.classList.add('hide');
+                search.classList.add('active');
+            } else {
+                cta.classList.remove('hide');
+                search.classList.remove('active');
+            }
+        });
+    </script>
 </body>
 
 </html>
