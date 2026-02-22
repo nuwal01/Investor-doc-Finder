@@ -11,10 +11,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Auto-detect: local dev server vs deployed Cloud Function
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
-    // ⚠️  REPLACE the production URL with your deployed Cloud Function URL after firebase deploy.
-    const FUNCTION_URL = isLocal
-        ? `${window.location.origin}/api/searchDocuments`
-        : 'https://us-central1-investor-doc-finder.cloudfunctions.net/searchDocuments';
+    // Automatically points to local dev-server, Render server, or Vercel serverless function
+    const FUNCTION_URL = '/api/searchDocuments';
 
     // ── DOM refs ───────────────────────────────
     const searchTitle = document.getElementById('searchTitle');
