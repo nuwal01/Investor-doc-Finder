@@ -2,7 +2,7 @@
 
 A full-stack web app for searching, viewing, and saving investor documents — SEC filings (10-K, 10-Q, 8-K), earnings reports, investor presentations, and more — for any public company worldwide.
 
-**Live URL:** _[Add after deployment]_
+**Live URL:** _[(https://investor-doc-finder.vercel.app/index.html)]_
 
 ---
 
