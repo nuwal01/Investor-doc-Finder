@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+sse-starlette
+httpx
+playwright
+beautifulsoup4
+lxml
+groq
+google-generativeai
+python-dotenv
+requests
+python-multipart
+pydantic
+aiofiles
+finnhub-python
+Pillow
+firebase-admin
