@@ -1,5 +1,5 @@
 """
-Web Search — generates targeted search queries and finds investor PDFs via Serper.
+Web Search — generates targeted search queries and finds investor PDFs via Google Custom Search.
 
 Input:  entity dict, doc_type (str), year (int)
 Output: dict {url, source, confidence} or None
@@ -7,28 +7,44 @@ Output: dict {url, source, confidence} or None
 Pipeline:
   0. Search annualreports.com first (reliable universal source)
   1. Build 6+ specialised Google search queries (fixed templates + native language)
-  2. All queries run in parallel against Serper API
+  2. All queries run in parallel against Google Custom Search API
   3. Collected PDF URLs are validated and the best is returned
 """
 
 import asyncio
 import json
 import os
+import re
+import smtplib
 import sys
+from email.mime.text import MIMEText
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from utils.pdf_validator import validate_pdf
+from utils.pdf_validator import validate_pdf, doc_type_tier
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 SERPER_URL = "https://google.serper.dev/search"
+TAVILY_URL = "https://api.tavily.com/search"
+
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
+SMTP_FROM = os.getenv("SMTP_FROM", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+
+# ── Search provider credit exhaustion tracking ────────────────────────────────
+# These flip to True at runtime when a provider returns 429/402/403.
+# They reset on process restart — no persistence needed for dev.
+_SERPER_EXHAUSTED = False
+_TAVILY_EXHAUSTED = False
 
 DOC_TYPE_LABELS = {
     "annual_report": "annual report",
@@ -194,8 +210,149 @@ _COMPANY_SUFFIXES = frozenset({
     "petroleum", "energy", "pipeline",
 })
 
+# Subdomain prefixes that are never IR pages — reject during web-search result filtering.
+_KNOWN_REJECT_SUBDOMAIN_PREFIXES_WS: tuple[str, ...] = (
+    "saude.", "health.", "rh.", "careers.", "jobs.",
+    "media.", "news.", "press.", "blog.", "shop.",
+    "store.", "ecommerce.", "support.", "help.",
+    "mail.", "webmail.", "intranet.", "portal.",
+)
+
+_EXCHANGE_DOMAINS: tuple[str, ...] = (
+    "nseindia.com", "bseindia.com", "sec.gov",
+    "sedar.com", "sgx.com", "kap.org.tr", "dfm.ae", "adx.ae",
+)
+
+# Third-party ESG/research publishers — never contain company-official annual reports.
+_THIRD_PARTY_RESEARCH_DOMAINS = frozenset({
+    "planet-tracker.org", "influencemap.org", "carbontracker.org",
+    "shareaction.org", "sustainalytics.com",
+})
+# Path-scoped rejections for domains that host both ESG and legitimate data.
+_THIRD_PARTY_ESG_PATH_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("msci.com", "/esg"),
+    ("spglobal.com", "/esg"),
+)
+
+# FIX 1: identity scoring sets
+_LEGAL_SUFFIXES_ID = frozenset({
+    "plc", "jsc", "llc", "ltd", "inc", "corp", "corporation", "as", "sa",
+    "nv", "bv", "ag", "gmbh", "oy", "ab", "asa", "se", "spa", "srl",
+    "pjsc", "oao", "pao", "ojsc", "bhd", "tbk", "limited", "co",
+})
+
+_COMMON_GEO_WORDS_ID = frozenset({
+    "united", "bank", "group", "holding", "holdings", "company", "companies",
+    "international", "national", "global", "general", "africa", "american",
+    "americas", "europe", "european", "asia", "asian", "pacific",
+    "middle", "east", "north", "south", "west", "china", "india",
+    "kingdom", "states", "federal", "for", "and", "the", "of",
+})
+
 # Cache for Groq language detection results (company_name.lower() → context dict)
 _context_cache: dict[str, dict] = {}
+
+
+def _extract_core_tokens_ws(company_name: str) -> list[str]:
+    """Strip legal suffixes and generic words; return distinctive name tokens."""
+    tokens = [t.lower() for t in company_name.split()]
+    return [t for t in tokens
+            if t not in _LEGAL_SUFFIXES_ID and t not in _COMMON_GEO_WORDS_ID and len(t) > 2]
+
+
+def _name_acronym(company_name: str) -> str:
+    """Derive acronym from significant words: 'United Bank Africa Plc' → 'uba'."""
+    ignore = _LEGAL_SUFFIXES_ID
+    tokens = [t for t in company_name.split() if len(t) >= 4 and t.lower() not in ignore]
+    return "".join(t[0].lower() for t in tokens)
+
+
+def _company_identity_score_ws(url: str, title: str, snippet: str,
+                                company_name: str, ticker: str = "") -> float:
+    """Score result identity vs target company.
+
+    Returns 1.0 (domain), 0.5 (title), 0.2 (snippet only), 0.0 (no match → reject).
+    When core tokens and ticker are both absent, falls back to name acronym.
+    """
+    core = _extract_core_tokens_ws(company_name)
+    ticker_l = ticker.lower().strip()
+
+    # If all tokens are filtered and no ticker, derive acronym as virtual ticker
+    if not core and not ticker_l:
+        acronym = _name_acronym(company_name)
+        if len(acronym) >= 3:
+            ticker_l = acronym
+        else:
+            return 1.0  # truly no criteria → allow
+
+    try:
+        _parsed = urlparse(url)
+        domain = _parsed.netloc.lower()
+        url_path = _parsed.path.lower()
+    except Exception:
+        domain = url.lower()
+        url_path = ""
+
+    domain_flat = domain.replace("-", "").replace(".", "")
+    url_path_flat = url_path.replace("-", "").replace("_", "").replace("/", "")
+    title_l = title.lower()
+    snippet_l = snippet.lower()
+
+    if ticker_l and len(ticker_l) >= 3 and ticker_l in domain_flat:
+        return 1.0
+    # Domain check: single-token uses strict prefix rule to prevent "zenith" matching
+    # "zenithdrugs.com"; multi-token requires all (or all-but-one for 3+) tokens.
+    if core:
+        if len(core) == 1:
+            _c = core[0]
+            _root = domain.split(".")[0].replace("-", "").replace("_", "")
+            _exact = (_root == _c)
+            # prefix match: "zenithbank" ✓ (diff≤4), "zenithdrugs" ✗ (diff=5)
+            _start = _root.startswith(_c) and len(_root) - len(_c) <= 4
+            # suffix match: "bankofgeorgia" endswith "georgia" (diff≤7) ✓
+            _end = _root.endswith(_c) and len(_root) - len(_c) <= 7
+            if _exact or _start or _end:
+                return 1.0
+        else:
+            matched_in_domain = sum(1 for t in core if t in domain)
+            required_domain = len(core) if len(core) <= 2 else len(core) - 1
+            if matched_in_domain >= required_domain:
+                return 1.0
+
+    # Path check — catches exchange URLs where identifier is in filename
+    try:
+        path = urlparse(url).path.lower().replace("-", "").replace("_", "")
+    except Exception:
+        path = ""
+
+    if ticker_l and len(ticker_l) >= 3 and ticker_l in path:
+        return 1.0
+    if core and any(t in path for t in core):
+        return 1.0
+
+    if ticker_l and len(ticker_l) >= 3 and ticker_l in title_l:
+        return 0.5
+    # Title: single-token returns 0.4 (below >=0.5 collection threshold) so only domain-matched
+    # results are collected for ambiguous names like "Zenith"; multi-token requires ALL tokens.
+    if core:
+        if len(core) == 1:
+            if re.search(r'\b' + re.escape(core[0]) + r'\b', title_l):
+                return 0.4  # intentionally below threshold — domain match required
+        elif all(t in title_l for t in core):
+            return 0.5
+    if ticker_l and len(ticker_l) >= 3 and ticker_l in snippet_l:
+        return 0.2
+    if core and any(t in snippet_l for t in core):
+        return 0.2
+    # URL path check: aggregator sites (annualreports.com) embed the ticker/name in the
+    # file path rather than the domain — e.g. NASDAQ_AAPL_2023.pdf.
+    if ticker_l and len(ticker_l) >= 3 and ticker_l in url_path_flat:
+        return 0.5
+    if core and all(t in url_path_flat for t in core):
+        return 0.5
+    if core and any(t in url_path_flat for t in core):
+        return 0.2
+    return 0.0  # no match → reject
 
 
 def detect_region(company_name: str, country: str) -> str:
@@ -225,23 +382,6 @@ def detect_region(company_name: str, country: str) -> str:
     return "global"
 
 
-def _has_company_word_in_content(url: str, title: str, snippet: str, company_name: str) -> bool:
-    """Return True if at least one significant company name word appears in URL or title.
-
-    Snippet is excluded: it often mentions unrelated companies as comparisons,
-    causing false positives for obscure companies.
-    """
-    words = [
-        w.lower() for w in company_name.split()
-        if len(w) > 3 and w.lower() not in _COMPANY_SUFFIXES
-    ]
-    if not words:
-        return True  # No meaningful words to filter on
-    # Check URL and title only (stronger signals)
-    url_and_title = (url + " " + title).lower()
-    return any(w in url_and_title for w in words)
-
-
 # ── 0. annualreports.com source ──────────────────────────────────────────────
 
 async def search_annualreports_com(
@@ -259,13 +399,15 @@ async def search_annualreports_com(
         return None
 
     query = f'site:annualreports.com "{company_name}" {year}'
-    headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
-        # Step 1: find the company page on annualreports.com
+        # Step 1: find the company page on annualreports.com via Serper
         try:
             resp = await client.post(
-                SERPER_URL, json={"q": query, "num": 5}, headers=headers, timeout=15,
+                SERPER_URL,
+                headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+                json={"q": query, "num": 5},
+                timeout=15,
             )
             if resp.status_code != 200:
                 return None
@@ -533,21 +675,60 @@ async def generate_search_queries(company_name: str, doc_type: str, year: int) -
     return queries
 
 
-# ── 3. Run a single Serper query ─────────────────────────────────────────────
+# ── 3. Run a single query — Serper → Tavily fallback ─────────────────────────
 
-async def run_serper_query(client: httpx.AsyncClient, query: str) -> list[tuple[str, str, str]]:
-    """POST a query to Serper and return (url, title, snippet) tuples for PDF results."""
-    headers = {
-        "X-API-KEY": SERPER_API_KEY,
-        "Content-Type": "application/json",
-    }
-    payload = {"q": query, "num": 10}
+import logging as _logging
 
+def _notify_admin_search_exhausted(provider: str) -> None:
+    _logging.critical(
+        "[ADMIN ALERT] Search provider '%s' is exhausted. "
+        "All search providers are down — web search phase is disabled. "
+        "Top up Serper at serper.dev or Tavily at tavily.com.",
+        provider,
+    )
+    if not all([ADMIN_EMAIL, SMTP_FROM, SMTP_PASSWORD]):
+        return
     try:
-        resp = await client.post(SERPER_URL, json=payload, headers=headers, timeout=15)
+        msg = MIMEText(
+            f"Search provider '{provider}' is exhausted on Investor Doc Finder.\n\n"
+            f"Web search phase is now disabled until credits are topped up.\n\n"
+            f"- Top up Serper at serper.dev\n"
+            f"- Top up Tavily at tavily.com"
+        )
+        msg["Subject"] = f"[IDF ALERT] {provider} search credits exhausted"
+        msg["From"] = SMTP_FROM
+        msg["To"] = ADMIN_EMAIL
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(SMTP_FROM, SMTP_PASSWORD)
+            smtp.send_message(msg)
+        _logging.info("[ADMIN ALERT] Email sent to %s", ADMIN_EMAIL)
+    except Exception as e:
+        _logging.error("[ADMIN ALERT] Email send failed: %s", e)
+
+
+async def _query_serper(
+    client: httpx.AsyncClient, query: str
+) -> list[tuple[str, str, str]] | None:
+    """POST query to Serper. Returns results or None if exhausted/failed."""
+    global _SERPER_EXHAUSTED
+    if _SERPER_EXHAUSTED or not SERPER_API_KEY:
+        return None
+    try:
+        resp = await client.post(
+            SERPER_URL,
+            headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+            json={"q": query, "num": 10},
+            timeout=15,
+        )
+        if resp.status_code in (402, 429, 403):
+            _logging.warning("[Serper] Credits exhausted (HTTP %d). Switching to Tavily.", resp.status_code)
+            _SERPER_EXHAUSTED = True
+            return None
         if resp.status_code != 200:
+            _logging.warning("[Serper] HTTP %d for query: %s", resp.status_code, query[:80])
             return []
-    except Exception:
+    except Exception as e:
+        _logging.warning("[Serper] Request failed: %s", e)
         return []
 
     data = resp.json()
@@ -555,19 +736,99 @@ async def run_serper_query(client: httpx.AsyncClient, query: str) -> list[tuple[
     for item in data.get("organic", []):
         link = item.get("link", "")
         if link and (".pdf" in link.lower() or "pdf" in link.lower()):
-            results.append((
-                link,
-                item.get("title", ""),
-                item.get("snippet", ""),
-            ))
-
+            results.append((link, item.get("title", ""), item.get("snippet", "")))
     return results
+
+
+async def _query_tavily(
+    client: httpx.AsyncClient, query: str
+) -> list[tuple[str, str, str]] | None:
+    """POST query to Tavily. Returns results or None if exhausted/failed."""
+    global _TAVILY_EXHAUSTED
+    if _TAVILY_EXHAUSTED or not TAVILY_API_KEY:
+        return None
+    try:
+        resp = await client.post(
+            TAVILY_URL,
+            headers={"Content-Type": "application/json"},
+            json={
+                "api_key": TAVILY_API_KEY,
+                "query": query,
+                "search_depth": "basic",
+                "max_results": 10,
+                "include_raw_content": False,
+            },
+            timeout=15,
+        )
+        if resp.status_code in (402, 429, 403):
+            _logging.warning("[Tavily] Credits exhausted (HTTP %d).", resp.status_code)
+            _TAVILY_EXHAUSTED = True
+            return None
+        if resp.status_code != 200:
+            _logging.warning("[Tavily] HTTP %d for query: %s", resp.status_code, query[:80])
+            return []
+    except Exception as e:
+        _logging.warning("[Tavily] Request failed: %s", e)
+        return []
+
+    data = resp.json()
+    results = []
+    for item in data.get("results", []):
+        link = item.get("url", "")
+        if link and (".pdf" in link.lower() or "pdf" in link.lower()):
+            results.append((link, item.get("title", ""), item.get("content", "")))
+    return results
+
+
+async def run_serper_query(
+    client: httpx.AsyncClient, query: str
+) -> list[tuple[str, str, str]]:
+    """Run a single search query with Serper → Tavily fallback.
+
+    Returns (url, title, snippet) tuples for PDF results.
+    Fires admin alert if both providers are exhausted.
+    """
+    # Try Serper first
+    serper_result = await _query_serper(client, query)
+    if serper_result is not None:
+        return serper_result
+
+    # Serper exhausted or missing — try Tavily
+    tavily_result = await _query_tavily(client, query)
+    if tavily_result is not None:
+        return tavily_result
+
+    # Both exhausted
+    if _SERPER_EXHAUSTED and _TAVILY_EXHAUSTED:
+        _notify_admin_search_exhausted("Tavily")
+
+    return []
+
+
+# ── 3b. EDGAR HTM → PDF resolver ─────────────────────────────────────────────
+
+async def resolve_edgar_htm_to_pdf(client: httpx.AsyncClient, htm_url: str) -> str | None:
+    """If url is an EDGAR filing index page, find the primary PDF inside it."""
+    try:
+        resp = await client.get(htm_url, timeout=15)
+        if resp.status_code != 200:
+            return None
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            if href.endswith(".pdf"):
+                if href.startswith("http"):
+                    return href
+                return "https://www.sec.gov" + href
+    except Exception:
+        return None
+    return None
 
 
 # ── 4. Orchestrator ──────────────────────────────────────────────────────────
 
 async def run_web_search(entity: dict, doc_type: str, year: int, sector: str = "") -> dict | None:
-    """Search annualreports.com first, then run parallel Serper queries with multilingual support.
+    """Search annualreports.com first, then run parallel Google CSE queries with multilingual support.
 
     Runs standard queries + Groq multilingual queries (with sector context) in parallel.
 
@@ -584,11 +845,20 @@ async def run_web_search(entity: dict, doc_type: str, year: int, sector: str = "
         return None
 
     country = entity.get("country", "")
+    ticker = entity.get("ticker", "")
+    ir_url_entity = entity.get("ir_url", "")
+    try:
+        _ir_netloc_ws = urlparse(ir_url_entity).netloc.lower().lstrip("www.") if ir_url_entity else ""
+    except Exception:
+        _ir_netloc_ws = ""
 
     # Step 0: annualreports.com (most reliable for listed companies)
     ar_result = await search_annualreports_com(company_name, doc_type, year)
     if ar_result and ar_result["score"] >= 0.5:
-        return ar_result
+        # FIX 1: identity check — annualreports.com can return wrong-company results
+        if _company_identity_score_ws(ar_result["url"], "", "", company_name, ticker) > 0.0:
+            return ar_result
+        ar_result = None  # wrong company — fall through to Google CSE
 
     # Step 1: generate queries in parallel (standard + multilingual via Groq)
     # Pre-seed context cache with entity country so detect_region works without extra API call
@@ -614,7 +884,7 @@ async def run_web_search(entity: dict, doc_type: str, year: int, sector: str = "
     if not queries:
         return ar_result
 
-    # Step 2: run all queries in parallel against Serper
+    # Step 2: run all queries in parallel against Google CSE
     async with httpx.AsyncClient() as client:
         tasks = [run_serper_query(client, q) for q in queries]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -627,21 +897,74 @@ async def run_web_search(entity: dict, doc_type: str, year: int, sector: str = "
     )
 
     seen: set[str] = set()
-    english_urls: list[str] = []
-    other_urls: list[str] = []
+    pending: list[tuple[str, str]] = []  # (url, "en" | "other")
     for result in results:
         if isinstance(result, Exception):
             continue
         for url, title, snippet in result:
-            if url not in seen and _has_company_word_in_content(url, title, snippet, company_name):
-                seen.add(url)
-                url_lower = url.lower()
-                if any(kw in url_lower for kw in _EN_URL_KW):
-                    english_urls.append(url)
-                elif any(kw in url_lower for kw in _NON_EN_URL_KW):
-                    other_urls.append(url)
-                else:
-                    english_urls.append(url)  # treat unknown as neutral/English
+            if url not in seen:
+                # Reject third-party ESG/research publishers
+                try:
+                    _r_netloc = urlparse(url).netloc.lower().lstrip("www.")
+                    _r_path = urlparse(url).path.lower()
+                except Exception:
+                    _r_netloc, _r_path = "", ""
+                if any(d in _r_netloc for d in _THIRD_PARTY_RESEARCH_DOMAINS):
+                    continue
+                if any(_r_netloc.endswith(d) and _r_path.startswith(p)
+                       for d, p in _THIRD_PARTY_ESG_PATH_PREFIXES):
+                    continue
+                if any(_r_netloc.startswith(p) for p in _KNOWN_REJECT_SUBDOMAIN_PREFIXES_WS):
+                    continue
+
+                id_score = _company_identity_score_ws(url, title, snippet, company_name, ticker)
+                # URLs from the entity's known IR domain are always trusted, even when the
+                # published report uses a parent-company name (e.g. Cementos Argos → grupoargos.com).
+                try:
+                    _url_netloc_ws = urlparse(url).netloc.lower().lstrip("www.")
+                except Exception:
+                    _url_netloc_ws = ""
+                from_ir_domain = bool(
+                    _ir_netloc_ws and (
+                        _ir_netloc_ws in _url_netloc_ws or _url_netloc_ws.endswith(_ir_netloc_ws)
+                    )
+                )
+                from_exchange = any(d in _r_netloc for d in _EXCHANGE_DOMAINS)
+                if from_ir_domain or from_exchange or id_score >= 0.5:
+                    seen.add(url)
+                    url_lower = url.lower()
+                    if any(kw in url_lower for kw in _EN_URL_KW):
+                        bucket = "en"
+                    elif any(kw in url_lower for kw in _NON_EN_URL_KW):
+                        bucket = "other"
+                    else:
+                        bucket = "en"  # treat unknown as neutral/English
+                    pending.append((url, bucket))
+
+    # Resolve EDGAR .htm/.html filing index pages → primary PDF (in parallel).
+    # Any URL that fails to resolve is dropped before validation.
+    async def _maybe_resolve(client: httpx.AsyncClient, u: str) -> str | None:
+        u_lower = u.lower()
+        if "sec.gov" in u_lower and (u_lower.endswith(".htm") or u_lower.endswith(".html")):
+            return await resolve_edgar_htm_to_pdf(client, u)
+        return u
+
+    english_urls: list[str] = []
+    other_urls: list[str] = []
+    if pending:
+        async with httpx.AsyncClient(follow_redirects=True) as _resolver_client:
+            resolved = await asyncio.gather(
+                *[_maybe_resolve(_resolver_client, u) for u, _ in pending],
+                return_exceptions=True,
+            )
+        buckets = [b for _, b in pending]
+        for bucket, final_url in zip(buckets, resolved):
+            if isinstance(final_url, Exception) or final_url is None:
+                continue
+            if bucket == "en":
+                english_urls.append(final_url)
+            else:
+                other_urls.append(final_url)
 
     # English URLs ranked before non-English
     all_urls = english_urls + other_urls
@@ -650,40 +973,63 @@ async def run_web_search(entity: dict, doc_type: str, year: int, sector: str = "
         # If annualreports.com found something (even weak), return it
         return ar_result
 
-    # Step 3: validate and pick best
+    # Step 3: validate and pick best (pass ir_url so IR-domain URLs get source_score bonus)
     scores = await asyncio.gather(
-        *[validate_pdf(url, company_name, year, doc_type) for url in all_urls],
+        *[validate_pdf(url, company_name, year, doc_type, ir_url_entity) for url in all_urls],
         return_exceptions=True,
     )
 
+    # FIX 2: tier-preference selection — TIER 1 beats TIER 2 regardless of score
     best_url = None
     best_score = 0.0
+    best_tier = 3
     for url, score in zip(all_urls, scores):
-        if isinstance(score, Exception):
+        if isinstance(score, Exception) or score <= 0.0:
             continue
-        if score > best_score:
+        tier = doc_type_tier(url, doc_type)
+        if tier < best_tier or (tier == best_tier and score > best_score):
+            best_tier = tier
             best_score = score
             best_url = url
 
-    # Compare with annualreports.com result
-    if ar_result and ar_result["score"] > best_score:
-        return ar_result
+    # Compare with annualreports.com result (tier-aware)
+    if ar_result and ar_result["score"] > 0.0:
+        ar_tier = doc_type_tier(ar_result["url"], doc_type)
+        if ar_tier < best_tier or (ar_tier == best_tier and ar_result["score"] > best_score):
+            return ar_result
 
     if best_url and best_score > 0.3:
         # Extra gate: reject generic PDFs with no URL-level signal.
-        # A URL that has no company name, no year, and no annual keyword in the path
-        # is almost certainly a false positive from an off-topic Serper result.
+        # year_in_url is intentionally excluded: a publication that merely has "2024"
+        # in its date-path (e.g. a newsletter) should not bypass this gate.
         url_lower_final = best_url.lower()
         company_words = [w for w in company_name.lower().split() if len(w) > 3
                          and w not in ("limited", "group", "holdings", "industries")]
         company_in_url = any(w in url_lower_final for w in company_words)
-        year_in_url = str(year) in url_lower_final
         annual_in_url = any(kw in url_lower_final for kw in
                             ("annual", "/ar/", "_ar.", "annualreport", "annual-report",
                              "ar20", "ar_20", "annrep"))
-        has_url_signal = company_in_url or year_in_url or annual_in_url
-        if not has_url_signal and best_score < 0.7:
-            # No reliable URL signal → don't return a likely false positive
+        # IR-domain URLs always pass (company_in_url covers these via domain netloc check)
+        from_ir = bool(_ir_netloc_ws and _ir_netloc_ws in url_lower_final)
+        # Official exchange/filing domains host PDFs with opaque hash-based paths (e.g. BSE,
+        # NSE, SEC EDGAR) that contain no company name or doc-type keyword — bypass the gate.
+        try:
+            _url_netloc_final = urlparse(best_url).netloc.lower().lstrip("www.")
+        except Exception:
+            _url_netloc_final = ""
+        _OFFICIAL_FILING_DOMAINS = (
+            "sec.gov", "bseindia.com", "nseindia.com", "archives.nseindia.com",
+            "nsearchives.nseindia.com", "kap.org.tr",
+            "dfm.ae", "feeds.dfm.ae", "adx.ae", "apigateway.adx.ae",
+            "saudiexchange.sa", "bursamalaysia.com", "sgx.com",
+            "set.or.th", "jse.co.za", "ngxgroup.com", "stockex.co.tt", "jamstockex.com",
+        )
+        from_official_filing = any(
+            _url_netloc_final == d or _url_netloc_final.endswith("." + d)
+            for d in _OFFICIAL_FILING_DOMAINS
+        )
+        has_url_signal = company_in_url or annual_in_url or from_ir or from_official_filing
+        if not has_url_signal:
             return ar_result
         return {"url": best_url, "source": "Web Search", "confidence": "low", "score": best_score}
 

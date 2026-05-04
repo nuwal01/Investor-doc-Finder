@@ -1,0 +1,30 @@
+INFO:     Will watch for changes in these directories: ['C:\\Users\\Hp\\Investor-Doc-Finder\\Investor-Doc-Finder\\backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [5764] using StatReload
+INFO:     Started server process [21932]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'phases\web_search.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [21932]
+INFO:     Started server process [16016]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'phases\web_search.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [16016]
+INFO:     Started server process [19068]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'phases\web_search.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [19068]
+INFO:     Started server process [22500]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.

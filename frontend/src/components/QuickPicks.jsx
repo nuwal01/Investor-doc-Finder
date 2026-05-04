@@ -1,9 +1,9 @@
 export default function QuickPicks({ onPick }) {
   const picks = [
-    'Apple annual report 2023',
-    'Tesla Q3 2023',
-    'Microsoft presentation 2024',
-    'Reliance Industries annual report 2023',
+    'Apple annual report 2024',
+    'Turkish Airlines annual report 2024',
+    'Infosys annual report 2024',
+    'Samsung annual report 2024',
   ];
 
   return (

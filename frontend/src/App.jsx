@@ -3,6 +3,7 @@ import { AuthProvider, ProtectedRoute } from './context/AuthContext';
 import Landing from './pages/Landing';
 import Auth from './pages/Auth';
 import Search from './pages/Search';
+import AdminFeedback from './pages/AdminFeedback';
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/admin/feedback" element={<AdminFeedback />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

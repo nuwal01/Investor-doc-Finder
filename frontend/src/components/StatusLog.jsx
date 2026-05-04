@@ -9,7 +9,7 @@ const MESSAGES = [
   "Almost there...",
 ];
 
-function StatusLog({ isSearching, progress }) {
+function StatusLog({ isSearching, progress, hasResult }) {
   const msgIndex = Math.min(
     Math.floor((progress / 100) * MESSAGES.length),
     MESSAGES.length - 1
@@ -35,7 +35,11 @@ function StatusLog({ isSearching, progress }) {
         marginBottom: '16px',
         minHeight: '20px',
       }}>
-        {progress >= 100 ? '✓ Document located' : `⟳  ${currentMessage}`}
+        {progress >= 100
+          ? (hasResult
+              ? <span className="success">✓ Document located</span>
+              : <span className="error">✗ Document not found</span>)
+          : `⟳  ${currentMessage}`}
       </p>
 
       {/* Progress bar track */}

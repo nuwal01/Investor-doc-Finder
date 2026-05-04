@@ -32,9 +32,9 @@ export function delay(ms) {
 /**
  * Maps confidence score to badge class
  */
-export function getConfidenceClass(confidence) {
-  if (confidence >= 0.8) return 'high';
-  if (confidence >= 0.5) return 'medium';
+export function getConfidenceClass(score) {
+  if (score >= 1.80) return 'high';
+  if (score >= 1.20) return 'medium';
   return 'low';
 }
 

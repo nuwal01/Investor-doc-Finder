@@ -7,11 +7,17 @@ import json
 import os
 import uuid
 from datetime import datetime
+from urllib.parse import urlparse
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from agent import run_agent, run_agent_silent
@@ -22,6 +28,9 @@ from utils.sse_manager import stream_events
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 app = FastAPI(title="Investor Doc Finder")
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -76,6 +85,7 @@ async def _persist_search(uid: str, result: dict) -> None:
 
 
 @app.post("/search")
+@limiter.limit("10/minute")
 async def search(req: SearchRequest, request: Request):
     """Main search endpoint with SSE streaming. Requires a valid Firebase ID token."""
     user = await verify_token(request)
@@ -351,6 +361,119 @@ async def user_profile(request: Request):
         "email": user.get("email", ""),
         "created_at": datetime.now().isoformat(),
     }
+
+
+# ── Feedback endpoints ────────────────────────────────────────────────────────
+
+
+class FeedbackRequest(BaseModel):
+    company_name: str
+    doc_type: str
+    year: int
+    original_query: str
+    url_returned: str | None = None
+    issue_type: str  # wrong_document | not_found | wrong_year | other
+    user_note: str = Field(default="", max_length=500)
+
+
+@app.post("/api/feedback")
+@limiter.limit("5/minute")
+async def submit_feedback(item: FeedbackRequest, request: Request):
+    """Record a user feedback report. No authentication required."""
+    if not db:
+        return {"success": False, "error": "Database not available"}
+    try:
+        from firebase_admin import firestore as fs
+        ref = db.collection("feedback").document()
+        ref.set({
+            **item.model_dump(),
+            "timestamp": fs.SERVER_TIMESTAMP,
+            "status": "pending",
+        })
+        return {"success": True, "feedback_id": ref.id}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/feedback")
+async def get_feedback(request: Request):
+    """Return all feedback reports sorted by timestamp desc."""
+    await verify_token(request)
+    if not db:
+        return {"feedback": []}
+    from firebase_admin import firestore as fs
+    docs = (
+        db.collection("feedback")
+        .order_by("timestamp", direction=fs.Query.DESCENDING)
+        .limit(200)
+        .stream()
+    )
+    feedback = []
+    for doc in docs:
+        data = doc.to_dict()
+        data["id"] = doc.id
+        if "timestamp" in data and data["timestamp"] is not None:
+            try:
+                data["timestamp"] = data["timestamp"].isoformat()
+            except AttributeError:
+                pass
+        feedback.append(data)
+    return {"feedback": feedback}
+
+
+ALLOWED_SCHEMES = {"http", "https"}
+BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254"}
+
+def _validate_proxy_url(url: str) -> None:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    if parsed.scheme not in ALLOWED_SCHEMES:
+        raise HTTPException(status_code=400, detail="Invalid URL scheme")
+    host = parsed.hostname or ""
+    if (
+        host in BLOCKED_HOSTS
+        or host.startswith("192.168.")
+        or host.startswith("10.")
+        or host.startswith("172.16.")
+    ):
+        raise HTTPException(status_code=400, detail="URL not allowed")
+
+
+@app.get("/api/download")
+@limiter.limit("30/minute")
+async def download_pdf(url: str, request: Request, filename: str = "document.pdf"):
+    """Proxy PDF download — fetches server-side and streams to client.
+    Bypasses CORS restrictions on IR websites.
+    HTML filings (e.g. SEC iXBRL 10-Ks) are served inline as text/html instead."""
+    await verify_token(request)
+    _validate_proxy_url(url)
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            resp = await client.get(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            })
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail="Could not fetch document")
+
+            url_lower = url.lower()
+            if url_lower.endswith((".htm", ".html")):
+                return Response(
+                    content=resp.content,
+                    media_type="text/html",
+                    headers={"Content-Disposition": f"inline; filename={filename}"},
+                )
+
+            return StreamingResponse(
+                iter([resp.content]),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/health")

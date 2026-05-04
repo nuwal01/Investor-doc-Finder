@@ -13,6 +13,7 @@ export function useSSESearch() {
   const [isSearching, setIsSearching] = useState(false);
   const [logVisible, setLogVisible] = useState(false);
   const [backendOnline, setBackendOnline] = useState(null); // null = unknown, true/false
+  const [error, setError] = useState(null);
 
   // Health check on mount and every 30 seconds
   useEffect(() => {
@@ -41,6 +42,7 @@ export function useSSESearch() {
     setProgress(0);
     setResults([]);
     setLogVisible(true);
+    setError(null);
 
     let statusCount = 0;
 
@@ -68,15 +70,16 @@ export function useSSESearch() {
           setProgress(updateProgress(statusCount));
           break;
 
-        case 'result':
+        case 'result': {
           // Data might be a stringified JSON or already parsed
           const result = typeof data === 'string' ? JSON.parse(data) : data;
           setResults(prev => [...prev, result]);
           setProgress(95);
           break;
+        }
 
         case 'error':
-          // No-op for now as per instructions or we can log
+          setError(data);
           break;
 
         case 'done':
@@ -178,6 +181,7 @@ export function useSSESearch() {
     setProgress(0);
     setIsSearching(false);
     setLogVisible(false);
+    setError(null);
   };
 
   return {
@@ -186,6 +190,8 @@ export function useSSESearch() {
     isSearching,
     logVisible,
     backendOnline,
+    error,
+    setError,
     startSearch,
     resetSearch,
   };

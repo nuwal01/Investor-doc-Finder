@@ -10,6 +10,12 @@ import ResultCard from '../components/ResultCard';
 
 import HistoryPanel from '../components/HistoryPanel';
 import LibraryPanel from '../components/LibraryPanel';
+import FeedbackModal from '../components/FeedbackModal';
+
+const extractYear = (q) => {
+  const match = q.match(/\b(20\d{2})\b/);
+  return match ? parseInt(match[1]) : new Date().getFullYear();
+};
 
 export default function Search() {
   const [query, setQuery] = useState('');
@@ -17,7 +23,28 @@ export default function Search() {
   const [activeTab, setActiveTab] = useState('search');
 
   const { user, signOut } = useAuth();
-  const { results, progress, isSearching, logVisible, backendOnline, startSearch, resetSearch } = useSSESearch();
+  const { results, progress, isSearching, logVisible, backendOnline, error, startSearch, resetSearch } = useSSESearch();
+  console.log('results state:', results);
+
+  const [feedbackModal, setFeedbackModal] = useState(null);
+
+  const openFeedbackForResult = (result) => setFeedbackModal({
+    company_name:     result.company_name || query,
+    doc_type:         result.doc_type     || docType,
+    year:             result.year         || extractYear(query),
+    original_query:   result.raw_query    || query,
+    url_returned:     result.url          || null,
+    preset_issue_type: 'wrong_document',
+  });
+
+  const openFeedbackNotFound = () => setFeedbackModal({
+    company_name:     query,
+    doc_type:         docType,
+    year:             extractYear(query),
+    original_query:   query,
+    url_returned:     null,
+    preset_issue_type: 'not_found',
+  });
 
   const handleSearch = () => {
     if (query.trim()) {
@@ -108,25 +135,66 @@ export default function Search() {
 
             <DocTypePills selected={docType} onChange={setDocType} />
             <QuickPicks onPick={handleQuickPick} />
-            <StatusLog isSearching={isSearching} progress={progress} />
+            <StatusLog isSearching={isSearching} progress={progress} hasResult={results.length > 0} />
 
             {results.length > 0 ? (
               <div className="results-container">
                 {results.map((result, index) => (
-                  <ResultCard key={index} result={result} />
+                  <ResultCard
+                    key={index}
+                    result={result}
+                    onReportIssue={() => openFeedbackForResult(result)}
+                  />
                 ))}
               </div>
             ) : (
-              !isSearching && !logVisible && (
-                <div className="empty-state">
-                  <div className="empty-state-icon">📄</div>
-                  <h3>Start Your Search</h3>
-                  <p>Enter a company name and document type above, or try a quick pick</p>
-                </div>
+              !isSearching && results.length === 0 && (
+                error
+                  ? (
+                    <div className="not-found-message">
+                      <span className="error-icon">✗</span>
+                      <p>No document found for your search.</p>
+                      <p className="error-detail">
+                        We couldn't find this document automatically.
+                        Try searching manually on the company's investor
+                        relations page or on your exchange's website.
+                      </p>
+                      <button
+                        onClick={openFeedbackNotFound}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: '0.78rem',
+                          cursor: 'pointer',
+                          padding: '8px 0 0',
+                          textDecoration: 'underline',
+                        }}
+                      >
+                        Report Missing Document
+                      </button>
+                    </div>
+                  )
+                  : !logVisible && (
+                    <div className="empty-state">
+                      <div className="empty-state-icon">📄</div>
+                      <h3>Start Your Search</h3>
+                      <p>Enter a company name and document type above, or try a quick pick</p>
+                    </div>
+                  )
               )
             )}
           </div>
         </div>
+      )}
+
+      {feedbackModal && (
+        <FeedbackModal
+          key={JSON.stringify(feedbackModal)}
+          onClose={() => setFeedbackModal(null)}
+          {...feedbackModal}
+        />
       )}
 
       {/* History Panel */}

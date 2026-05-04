@@ -7,6 +7,7 @@ Output: dict {company_name, doc_type, year, raw_query}
 
 import re
 import os
+import unicodedata
 from datetime import datetime
 from dotenv import load_dotenv
 from groq import Groq
@@ -153,7 +154,14 @@ def _extract_company_name(query: str) -> str:
 
     # Clean up extra whitespace and punctuation artifacts
     cleaned = re.sub(r"[^\w\s&.\'-]", " ", cleaned)
+    # Strip unicode dashes, bullets, and punctuation that the above regex misses
+    cleaned = re.sub(
+        "[‐-―‘-‟․-‧‰-⁞"
+        "⁠-⿿　-�]",
+        " ", cleaned
+    )
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = cleaned.strip("—–-•·|/\\").strip()
 
     return cleaned
 

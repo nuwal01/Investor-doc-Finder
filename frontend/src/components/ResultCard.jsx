@@ -1,16 +1,29 @@
 import { useState } from 'react';
 import { auth } from '../firebase-config';
-import { getConfidenceClass, openDocument, downloadDocument, formatDocumentTitle } from '../utils/helpers';
+import { getConfidenceClass, openDocument, formatDocumentTitle } from '../utils/helpers';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
-export default function ResultCard({ result }) {
+export default function ResultCard({ result, onReportIssue }) {
   const { url, source, confidence, score, company_name, doc_type, year, country, sector } = result;
-  const confidenceClass = getConfidenceClass(confidence || 0);
+  const confidenceClass = getConfidenceClass(score || 0);
   const title = formatDocumentTitle(company_name, doc_type, year);
-  const filename = `${company_name || 'document'}_${doc_type || 'report'}_${year || ''}`.replace(/\s+/g, '_');
 
   const [saveState, setSaveState] = useState('idle'); // idle | saving | saved | error
+
+  const isHtml = url?.toLowerCase().endsWith('.htm') ||
+                 url?.toLowerCase().endsWith('.html');
+
+  const handleDownload = () => {
+    if (isHtml) {
+      window.open(url, '_blank');
+      return;
+    }
+    const filename = `${company_name}_${doc_type}_${year}.pdf`
+      .replace(/[^a-zA-Z0-9._-]/g, '_');
+    const proxyUrl = `${BACKEND_URL}/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+    window.open(proxyUrl, '_blank');
+  };
 
   const handleSave = async () => {
     if (saveState === 'saved' || saveState === 'saving') return;
@@ -67,7 +80,6 @@ export default function ResultCard({ result }) {
 
       <div className="result-meta">
         Source: {source || 'Unknown'}
-        {score != null && <span style={{ marginLeft: '12px' }}>Score: {Number(score).toFixed(2)}</span>}
       </div>
 
       <div className="result-actions">
@@ -79,9 +91,9 @@ export default function ResultCard({ result }) {
         </button>
         <button
           className="result-btn"
-          onClick={() => downloadDocument(url, filename)}
+          onClick={handleDownload}
         >
-          Download ↓
+          {isHtml ? 'Open Filing ↗' : 'Download ↓'}
         </button>
         <button
           className={`save-btn ${saveState === 'saved' ? 'saved' : ''}`}
@@ -91,6 +103,24 @@ export default function ResultCard({ result }) {
         >
           {saveState === 'saved' ? '✅ Saved' : saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Failed to save' : '⭐ Save'}
         </button>
+        {onReportIssue && (
+          <button
+            onClick={onReportIssue}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-muted)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.72rem',
+              cursor: 'pointer',
+              padding: '4px 8px',
+              marginLeft: 'auto',
+            }}
+            title="Report an issue with this result"
+          >
+            Report Issue
+          </button>
+        )}
       </div>
     </div>
   );
