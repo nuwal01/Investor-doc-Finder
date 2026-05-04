@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { auth } from '../firebase-config';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
@@ -14,22 +14,32 @@ export function useSSESearch() {
   const [logVisible, setLogVisible] = useState(false);
   const [backendOnline, setBackendOnline] = useState(null); // null = unknown, true/false
   const [error, setError] = useState(null);
+  const hasCheckedOnce = useRef(false);
 
-  // Health check on mount and every 30 seconds
+  // Health check on mount and every 60 seconds
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/health`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout for Render cold start
+        const res = await fetch(`${BACKEND_URL}/health`, { signal: controller.signal });
+        clearTimeout(timeout);
         if (!res.ok) { setBackendOnline(false); return; }
         const data = await res.json();
         setBackendOnline(data.status === 'ok');
       } catch {
-        setBackendOnline(false);
+        // Only mark offline after the first check has completed
+        // This prevents flashing "offline" on initial cold start
+        if (hasCheckedOnce.current) {
+          setBackendOnline(false);
+        }
+      } finally {
+        hasCheckedOnce.current = true;
       }
     };
 
     checkHealth();
-    const interval = setInterval(checkHealth, 30_000);
+    const interval = setInterval(checkHealth, 60_000);
     return () => clearInterval(interval);
   }, []);
 

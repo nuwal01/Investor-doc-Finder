@@ -1,0 +1,20 @@
+[auth_middleware] Firebase Admin initialized successfully.
+Investor Doc Finder API is running
+INFO:     127.0.0.1:60114 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57101 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54542 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64104 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62822 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59620 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55275 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63457 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52582 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56836 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57370 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62371 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64431 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54367 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50060 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58931 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54786 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50377 - "GET /health HTTP/1.1" 200 OK
