@@ -4,3 +4,4 @@ node_modules/
 __pycache__/
 *.pyc
 backend/firebase-service-account.jsonbackend/*firebase-adminsdk*.json
+backend/investor-doc-finder-firebase-adminsdk-fbsvc-cf1de31c19.json
