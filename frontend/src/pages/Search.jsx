@@ -119,10 +119,10 @@ export default function Search() {
               <h1>Find Investor Documents</h1>
               <p>Search across 40+ global exchanges with AI-powered precision</p>
               {backendOnline === false && (
-                <p style={{ color: 'var(--error, #ef4444)', fontSize: '0.85rem', marginTop: '0.5rem' }}>
-                  Backend offline — start the server: <code>uvicorn main:app --reload --port 8000</code>
-                </p>
-              )}
+  <p style={{ color: 'var(--warning, #f59e0b)', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+    ⏳ Backend is waking up — this may take up to 60 seconds on first load. Please wait...
+  </p>
+)}
             </div>
 
             <SearchBar
