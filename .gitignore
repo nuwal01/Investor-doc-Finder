@@ -1,0 +1,19 @@
+# Secrets / credentials (keep .env.example, which is the committed template)
+.env
+
+# SQLite cache — runtime state, per CLAUDE.md "do not commit"; WAL mode adds sidecars
+cache.db
+cache.db-wal
+cache.db-shm
+
+# Generated artifacts
+converted_pdfs/
+batch_results.json
+
+# Python bytecode / test caches
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local editor / IDE state
+.vscode/

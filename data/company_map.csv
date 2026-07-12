@@ -1,0 +1,6 @@
+company_name,ticker,country,cik,exchange_code,canonical_name,stock_discovery_id,official_domain
+Apple Inc.,AAPL,US,0000320193,,Apple Inc.,,
+Microsoft Corporation,MSFT,US,0000789019,,Microsoft Corporation,,
+Amazon.com Inc.,AMZN,US,0001018724,,Amazon.com Inc.,,
+Alphabet Inc.,GOOGL,US,0001652044,,Alphabet Inc.,,
+Tesla Inc.,TSLA,US,0001318605,,Tesla Inc.,,
