@@ -407,6 +407,19 @@ def _token_present(tok: str, text: str) -> bool:
     return bool(re.search(r"(?<![a-z0-9])" + re.escape(tok) + r"(?![a-z0-9])", text))
 
 
+def _fy_year_set(fy_candidates: list[str]) -> set[int]:
+    """All calendar years a set of fiscal-year labels spans. '2023' -> {2023};
+    'FY2023-24' -> {2023, 2024} (split / non-calendar fiscal years)."""
+    ys: set[int] = set()
+    for fy in fy_candidates:
+        m = re.search(r"(20\d{2})\s*-\s*(\d{2,4})", fy)
+        if m:
+            a = int(m.group(1)); b = m.group(2)
+            ys.add(a); ys.add(int(b) if len(b) == 4 else int(str(a)[:2] + b))
+        ys.update(int(y) for y in re.findall(r"(?:19|20)\d{2}", fy))
+    return ys
+
+
 def _check_text(text: str, intent: dict, content_type: str, is_pdf: bool,
                 skip_company_check: bool = False,
                 year_text: str | None = None, source: str = "") -> VerifyResult:
@@ -498,11 +511,50 @@ def _check_text(text: str, intent: dict, content_type: str, is_pdf: bool,
     year_source = year_text if year_text is not None else text
     fy_candidates: list[str] = intent.get("fy_candidates", [])
     matched_fy: str | None = None
-    for fy in fy_candidates:
-        years = re.findall(r"\d{4}", fy)
-        if any(yr in year_source for yr in years):
-            matched_fy = fy
-            break
+
+    # Primary-fiscal-year gate (PDF cover / front-matter only). The requested year
+    # must be the document's PRIMARY reporting year — the most-recent year stated in
+    # a "year/period/months ended ... YYYY" phrase on the cover — NOT a prior-year
+    # COMPARATIVE column. Fixes the Avianca case: its statements are headed "...year
+    # ended December 31, 2024 and December 31, 2023", so a 2023 request must not be
+    # satisfied by the 2023 comparative when the document's own year is 2024. max()
+    # picks the current period (comparatives are prior/smaller); a publication year
+    # or boilerplate (e.g. "...Act of 1934", zip codes) is not in an "ended" phrase
+    # so can't distort it. Verified against real covers: Avianca->2024 (rejects 2023),
+    # Shopify->2022 (accepts — 2022 is a valid prior-year candidate), Hermès->2023
+    # (accepts, ignoring a nearby 2024 publication date). Scoped to PDFs (year_text
+    # present): EDGAR HTML's year_source is the FULL text whose notes carry subsequent-
+    # events "months ended ... 2024" phrases that would poison max(), and its cover
+    # sits behind an XBRL preamble anyway — so it keeps the original check. PDF covers
+    # with no "ended" phrase (glossy reports: R R Kabel, Tullow) also fall through.
+    if year_text is not None:
+        flat = re.sub(r"\s+", " ", year_source)
+        ended_years = [
+            int(y)
+            for m in re.finditer(r"(?:year|years|period|months)\s+(?:then\s+)?ended(.{0,70})", flat, re.I)
+            for y in re.findall(r"(?:19|20)\d{2}", m.group(1))
+        ]
+        if ended_years:
+            primary_fy = max(ended_years)
+            if primary_fy in _fy_year_set(fy_candidates):
+                matched_fy = next(
+                    (fy for fy in fy_candidates if primary_fy in _fy_year_set([fy])), None
+                )
+            else:
+                return _fail(
+                    f"Document's primary fiscal year {primary_fy} (from a 'year ended' "
+                    f"cover phrase) is not among requested {fy_candidates} — "
+                    f"comparative-year match rejected",
+                    content_type=content_type,
+                    is_pdf=is_pdf,
+                )
+
+    if matched_fy is None:
+        for fy in fy_candidates:
+            years = re.findall(r"\d{4}", fy)
+            if any(yr in year_source for yr in years):
+                matched_fy = fy
+                break
 
     if not matched_fy:
         return _fail(
