@@ -87,6 +87,35 @@ _REPORT_MARKERS: tuple[str, ...] = (
     "independent auditor",   # stem: matches "auditor's"/"auditors'"/"independent auditors' report"
 )
 
+# Financial-STATEMENT content subset of _REPORT_MARKERS — phrases a document has
+# only if it actually CONTAINS statements, not merely names/announces a report.
+# Used by the positive-gate corroboration below to tell a real report from a
+# publication announcement / AGM notice that references one. Report-NAME phrases
+# ("annual report", "report and accounts", "notice of annual general meeting",
+# "integrated report", "directors' report") are deliberately excluded — those are
+# exactly what announcements carry.
+_STATEMENT_MARKERS: tuple[str, ...] = (
+    "balance sheet",
+    "statement of profit and loss",
+    "statement of financial position",
+    "statement of comprehensive income",
+    "income statement",
+    "cash flow statement",
+    "auditor's report",
+    "independent auditor",
+)
+
+# A document that only NAMES a report (no statement content in the window we see)
+# is accepted only if it is also a full-length document. Real annual reports run
+# to dozens–hundreds of pages even when their first pages are pure narrative
+# (R R Kabel: 0 statement markers in its first 7 pages but 336 pages total);
+# publication announcements / notices are 1–2 pages. Evidence (2026-07-12): the 12
+# genuine batch reports are 67–590 pages; 5 real announcements checked are 1 page
+# (PDF) / short body (HTML). 10 sits far below the genuine floor, far above the
+# announcement ceiling. Page count is only known for PDFs (None for HTML, which in
+# this codebase is EDGAR — always statement-rich — so it passes on content).
+_REPORT_MIN_PAGES = 10
+
 # Interim/quarterly self-descriptions used as the NEGATIVE document-type gate.
 # Entries are regex, matched (via _earliest) against the LEADING region only, and
 # a match REJECTS only when it precedes any _IDENTITY_MARKER there (see the gate
@@ -381,7 +410,8 @@ def _verify_pdf(content: bytes, intent: dict, content_type: str,
         return _fail(f"pypdf error: {exc}", content_type=content_type, is_pdf=True)
 
     return _check_text(page_text, intent, content_type, is_pdf=True,
-                       skip_company_check=skip_company_check, year_text=head_text, source=source)
+                       skip_company_check=skip_company_check, year_text=head_text,
+                       source=source, total_pages=len(reader.pages))
 
 
 def _verify_html(content: bytes, intent: dict, content_type: str,
@@ -465,7 +495,8 @@ def _fy_year_set(fy_candidates: list[str]) -> set[int]:
 
 def _check_text(text: str, intent: dict, content_type: str, is_pdf: bool,
                 skip_company_check: bool = False,
-                year_text: str | None = None, source: str = "") -> VerifyResult:
+                year_text: str | None = None, source: str = "",
+                total_pages: int | None = None) -> VerifyResult:
     text_lower = _normalize(text)
 
     # ── Company-name check ───────────────────────────────────────────────────
@@ -658,6 +689,29 @@ def _check_text(text: str, intent: dict, content_type: str, is_pdf: bool,
         if not any(marker in normalized for marker in _REPORT_MARKERS):
             return _fail(
                 "no annual-report document markers found — likely wrong document type",
+                content_type=content_type,
+                is_pdf=is_pdf,
+            )
+
+        # Positive-gate corroboration. The check above passes on a single marker —
+        # and the bare "annual report" substring is one — so a publication
+        # announcement / AGM notice that merely REFERENCES a report ("Publication
+        # of the 2024 Annual Report ... and Notice of Annual General Meeting")
+        # slips through as if it were the report (the Tullow-2024 case). Require the
+        # document to actually BE a report: either it shows financial-statement
+        # CONTENT in the window we see, or it is a full-length document (real
+        # reports are dozens–hundreds of pages even when their first pages are pure
+        # narrative). An announcement has neither. Confirmed against 5 real
+        # announcements (0 statement markers, 1–2 pages) vs 12 genuine reports
+        # (11 carry statement content here; R R Kabel carries none in its first 7
+        # pages but is 336 pages, so it clears on length).
+        has_statement = any(m in normalized for m in _STATEMENT_MARKERS)
+        is_full_length = total_pages is not None and total_pages >= _REPORT_MIN_PAGES
+        if not has_statement and not is_full_length:
+            return _fail(
+                "names an annual report but shows no financial-statement content and "
+                "is not a full-length document — likely a publication announcement / "
+                "notice, not the report itself",
                 content_type=content_type,
                 is_pdf=is_pdf,
             )
