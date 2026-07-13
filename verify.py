@@ -418,6 +418,38 @@ def _token_present(tok: str, text: str) -> bool:
     return bool(re.search(r"(?<![a-z0-9])" + re.escape(tok) + r"(?![a-z0-9])", text))
 
 
+def _name_core_words(name: str) -> list[str]:
+    """The requested name's core words for single-token corroboration.
+
+    Split like _distinctive_tokens (periods/whitespace/hyphens) but KEEP short
+    words — in "R R Kabel" the two "r" words ARE the distinguishing part the
+    single surviving token lost. Then trim words documents render
+    inconsistently: right-trim corporate-form/generic tails ("Ltd", "JSC",
+    "S.A." fragments — _GENERIC_TOKENS members or <=3 chars; length-based on
+    purpose, no bespoke suffix dictionary), and left-trim GENERIC words only
+    ("The Sasol Group" -> core "sasol") — the left side never length-trims, so
+    a short leading "R R ..." is preserved. Without the left trim, a generic
+    lead-in makes the core spuriously multi-word and arms the corroboration
+    guard with a phrase ("the sasol") real covers don't carry (double-pollution
+    false-reject, confirmed synthetically 2026-07-12). Never trims the last
+    remaining word.
+    """
+    words = [w for w in (_normalize(t) for t in re.split(r"[.\s-]+", name)) if w]
+    while len(words) > 1 and words[0] in _GENERIC_TOKENS:
+        words.pop(0)
+    while len(words) > 1 and (words[-1] in _GENERIC_TOKENS or len(words[-1]) <= 3):
+        words.pop()
+    return words
+
+
+def _phrase_present(words: list[str], text: str) -> bool:
+    """True if `words` appear contiguously in order in `text`, any punctuation/
+    whitespace between them ("r r kabel" matches "R R KABEL", "R.R.Kabel",
+    "R-R-Kabel"), bounded so substrings of larger words don't count."""
+    pat = r"(?<![a-z0-9])" + r"[^a-z0-9]+".join(re.escape(w) for w in words) + r"(?![a-z0-9])"
+    return bool(re.search(pat, text))
+
+
 def _fy_year_set(fy_candidates: list[str]) -> set[int]:
     """All calendar years a set of fiscal-year labels spans. '2023' -> {2023};
     'FY2023-24' -> {2023, 2024} (split / non-calendar fiscal years)."""
@@ -513,6 +545,44 @@ def _check_text(text: str, intent: dict, content_type: str, is_pdf: bool,
                 content_type=content_type,
                 is_pdf=is_pdf,
             )
+
+        # Single-token corroboration guard. When the name collapsed to ONE
+        # distinctive token, identity so far rests on a single word — the AMBIPAR
+        # failure shape (real-but-insufficient signal). "R R Kabel Ltd" ->
+        # ['kabel']: any cable-maker's report contains "kabel". So require the
+        # requested name's core words ("r r kabel") to appear contiguously in the
+        # document text as corroboration. Applies to EVERY single-token collapse
+        # (no length/commonness cutoff — a cutoff just recreates the common-word-
+        # dictionary problem one level up); it self-skips when the requested core
+        # is itself one word (Shopify, Sasol, Hermès...) because then the phrase
+        # IS the already-matched token and adds nothing. Multi-token identity
+        # (2+ tokens) is untouched. Uses text_lower — for PDFs that is the
+        # leading region (first 7 pages); the token evidence lives there too.
+        # Corroborate against the REQUESTED name's core, falling back to the
+        # RESOLVED name's core. Live finding (batch 2026-07-12): under degraded
+        # LLM parsing raw_company can arrive polluted with the whole query
+        # ("R R Kabel Ltd 2023 annual report"), making the requested-core phrase
+        # unsatisfiable and false-rejecting the genuine document — while
+        # company_name stayed clean. Either full-name form appearing contiguously
+        # confirms the lone token wasn't coincidental; a wrong company's document
+        # contains neither (wrong-resolution is the divergence gate's job above).
+        if len(distinctive) == 1:
+            cores = [_name_core_words(n) for n in
+                     (intent.get("raw_company", ""), company_name) if n]
+            cores = [c for c in cores if c]
+            # Guard is meaningful only when EVERY available name form has a
+            # multi-word core: a single-word core (Shopify, Sasol, Avianca) is
+            # already fully represented by the matched token, and a polluted
+            # counterpart form must not re-arm the guard against it.
+            if cores and all(len(c) >= 2 for c in cores) \
+                    and not any(_phrase_present(c, text_lower) for c in cores):
+                return _fail(
+                    f"Single-token identity ({distinctive[0]!r}) lacks corroboration: "
+                    f"name core(s) {[' '.join(c) for c in cores]} not found "
+                    f"contiguously in document",
+                    content_type=content_type,
+                    is_pdf=is_pdf,
+                )
 
     # Fiscal year: at least one fy_candidate year must appear — but only in the
     # first pages (cover / front matter) for PDFs. A year that shows up ONLY deep
