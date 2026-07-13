@@ -33,7 +33,9 @@ DEFAULT_PROVIDER: str = os.environ.get("LLM_PROVIDER", "gemini")
 # start_time is even set, so nothing upstream can cut a stuck call short.
 _LLM_TIMEOUT_SEC = 30
 
-_GEMINI_MODEL = "gemini-2.5-flash-lite"  # free-tier available; swap to gemini-2.5-flash for higher quality
+# Maintained alias — the pinned "gemini-2.5-flash-lite" 404s ("no longer
+# available to new projects") for keys created after its retirement window.
+_GEMINI_MODEL = "gemini-flash-lite-latest"
 _OPENAI_MODEL = "gpt-4o-mini"
 _GROQ_MODEL   = "llama-3.1-8b-instant"   # free-tier via https://console.groq.com
 
