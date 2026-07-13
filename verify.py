@@ -48,8 +48,19 @@ def _distinctive_tokens(name: str) -> list[str]:
     words, so there is always something to match. Used for both the resolved
     company (``company_name``) and the originally-requested company
     (``raw_company``) so the two are compared on identical terms.
+
+    Tokenises on periods, whitespace AND hyphens (not just whitespace) so the
+    resolved name's punctuation surface-form can't diverge from the document's.
+    A whitespace-only split let a DOTTED suffix survive the len>2 filter (``S.A.``
+    -> ``"s.a."`` len 4, required) even though its un-dotted form ``"SA"`` (len 2)
+    is already dropped — and glued dotted cores (``"R.R.Kabel"``) never matched a
+    spaced document ("R R Kabel"). Splitting on ``.`` and ``-`` shatters both into
+    the same tokens the un-dotted/spaced form yields (``S.A.``->``s``,``a`` dropped;
+    ``R.R.Kabel``->``kabel``), fixing Avianca (S.A.), Turkcell (A.S.) and R R Kabel
+    as one root cause. ``&`` is deliberately NOT a separator, so ``AT&T``/``S&P``/
+    ``H&M`` keep their ampersand discriminator instead of collapsing to a generic.
     """
-    toks = [n for n in (_normalize(t) for t in name.split()) if len(n) > 2]
+    toks = [n for n in (_normalize(t) for t in re.split(r"[.\s-]+", name)) if len(n) > 2]
     distinct = [t for t in toks if t not in _GENERIC_TOKENS]
     return distinct or toks
 
