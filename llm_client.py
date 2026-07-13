@@ -24,6 +24,15 @@ logger = logging.getLogger(__name__)
 # Change this one line — or set LLM_PROVIDER=openai in .env
 DEFAULT_PROVIDER: str = os.environ.get("LLM_PROVIDER", "gemini")
 
+# Hard transport bound for every LLM call. Audit (2026-07-12) found these were
+# the ONLY under-bounded network calls in the codebase — every raw requests.*
+# call already passes an explicit 5–30s timeout — while the openai SDK defaults
+# to timeout=600s with 2 retries (~30 min worst case per call) and genai sets
+# no explicit bound. A hung transport here blocks the whole agent: MAX_WALL_SEC
+# is only checked between graph steps, and intent parsing runs before
+# start_time is even set, so nothing upstream can cut a stuck call short.
+_LLM_TIMEOUT_SEC = 30
+
 _GEMINI_MODEL = "gemini-2.5-flash-lite"  # free-tier available; swap to gemini-2.5-flash for higher quality
 _OPENAI_MODEL = "gpt-4o-mini"
 _GROQ_MODEL   = "llama-3.1-8b-instant"   # free-tier via https://console.groq.com
@@ -67,7 +76,12 @@ def _call_gemini(prompt: str, system: str, json_mode: bool) -> str:
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    client = genai.Client(
+        api_key=os.environ["GEMINI_API_KEY"],
+        # genai HttpOptions.timeout is in MILLISECONDS (verified empirically:
+        # an unroutable base_url fails in ~timeout/1000 seconds).
+        http_options=types.HttpOptions(timeout=_LLM_TIMEOUT_SEC * 1000),
+    )
     cfg = types.GenerateContentConfig(
         system_instruction=system or None,
         response_mime_type="application/json" if json_mode else None,
@@ -83,7 +97,13 @@ def _call_gemini(prompt: str, system: str, json_mode: bool) -> str:
 def _call_openai(prompt: str, system: str, json_mode: bool) -> str:
     from openai import OpenAI
 
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    # Bound the transport: SDK defaults are timeout=600s + 2 retries (~30 min
+    # worst case). One retry keeps transient-blip resilience at ~1 min worst case.
+    client = OpenAI(
+        api_key=os.environ["OPENAI_API_KEY"],
+        timeout=_LLM_TIMEOUT_SEC,
+        max_retries=1,
+    )
     messages: list[dict] = []
     if system:
         messages.append({"role": "system", "content": system})
