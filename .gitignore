@@ -9,6 +9,10 @@ cache.db-shm
 # Generated artifacts
 converted_pdfs/
 batch_results.json
+# EDGAR tickers cache — regenerated data, not source: resolver._load_tickers()
+# re-downloads it from sec.gov when missing/stale (24h TTL), so it need not be
+# tracked; committing it just churns a 700KB single-line blob on every refresh.
+data/edgar_tickers.json
 
 # Python bytecode / test caches
 __pycache__/
