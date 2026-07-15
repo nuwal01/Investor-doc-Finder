@@ -22,6 +22,7 @@
     - `c1f7700` **LLM transport bound** (`llm_client.py`) — `_LLM_TIMEOUT_SEC=30` on genai (ms) + openai (`max_retries=1`); a hung provider can no longer stall the agent past ~30s/call.
     - `f751c9a` **Gemini model → `gemini-flash-lite-latest`** (`llm_client.py`) — FORCED: the pinned `gemini-2.5-flash-lite` 404s for the current (newer) key's project.
     - `93de5e0` **doc-type corroboration** — a doc must show statement content OR be full-length (≥10 pages), not merely name a report; fixed the Tullow-2024 publication-notice passing as the report.
+    - `fc86667` **doc-type HTML chrome-strip** — strip nav/footer/aside + chrome ARIA roles before the statement scan so an aggregator page's nav statement-phrases can't false-corroborate (Stockopedia case); EDGAR skipped, PDF path unchanged.
 - **EDGAR→PDF conversion is LIVE** (built pre-git, in baseline `66e60cd`): `edgar.py convert_filing_to_pdf` renders the EDGAR HTML filing to PDF via wkhtmltopdf → `converted_pdfs/`, path cached (`cache.py pdf_path`). First conversion blocks ~8-44s per filing (then the persisted PDF is reused). **wkhtmltopdf maintenance status unchecked.**
 - **Open residuals:** doc-type **HTML-chrome false-positive** — CONFIRMED on a real Stockopedia page whose fin-nav contains "balance sheet"/"income statement" (follow-up: strip page chrome before the statement scan); R R Kabel clears the doc-type gate on the ≥10-page floor with 0 statement markers in its first 7 pages.
 - **Retraction:** the "Shopify prior-year fallback" item was a **false claim** — no prior-year `fy_candidates` expansion exists (US/CA → `[year]`; only India expands). Never in these docs; see §12.
@@ -29,7 +30,7 @@
 
 ## Next steps
 <!-- What to do next. Point Claude here when resuming a session. -->
-- **Doc-type gate HTML-chrome follow-up (new, 2026-07-13)** — `has_statement` scans the full extracted HTML, so a statement phrase in page chrome false-positives (confirmed on a real Stockopedia RNS page). Strip nav/footer/aside before the statement scan, or require statement phrasing near numeric content.
+- **Doc-type gate HTML-chrome follow-up — DONE (`fc86667`).** Chrome (nav/footer/aside + ARIA chrome roles) is stripped before the `has_statement` scan; the Stockopedia false-positive is fixed. Remaining sub-residual (open, not observed): a statement phrase in a plain `<div>` with no chrome tag/role would still pass — needs class/id heuristics or main-content extraction.
 - **Near-duplicate candidate dedup** — deferred; payoff shrank to ~3s after the body-read fix. Revisit only if a batch shows it changing a result.
 - **English-only doc-marker gap** — verify.py's `_REPORT_MARKERS`/`_QUARTERLY_MARKERS`/`_IDENTITY_MARKERS` are English only, so a correct-company/correct-year report in another language fails the doc-type gate (observed live for AMBIPAR's Portuguese filings). Own task: extend markers (PT/ES/FR/DE) or use an LLM doc-type classifier.
 - **Upstream LLM misparse** (intent.py/resolver.py) — the divergence gate is a verification-layer safety net, not a parse fix; the misparse itself is unaddressed by design.
