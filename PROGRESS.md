@@ -15,8 +15,21 @@
 - **Tiered give_up fallback (agent.py `_give_up_node` + company_map.csv + streamlit_app.py).** On give_up, surface a best-effort link. Tier 1 = curated `official_domain` (new CSV column, **hand-seeded by the user — code never populates it**; currently all-empty so Tier 1 is inert), keyed on `raw_company`; confidence `verified` if `company_name`/`raw_company` don't diverge (via `verify._distinctive_tokens`), else `uncertain`. Tier 2 (Tier-1 miss) = live "{raw_company} investor relations" search, `unverified`. Give_up payload gains `"fallback": {tier,url,confidence}|None`; verified results unchanged. Streamlit renders the 3 confidences distinctly. verify/resolver/intent/routing untouched. 4/4 tests + pytest green.
 - **Batch checkpoints: 12/15 (cache-on) and 12/15 (cache-off)** — both match the reliable baseline (OK on all but Silknet JSC, Aeromexico, AMBIPAR). Cache-off run confirmed the lazy mirror at scale: **skipped** on every clean primary win, **fired with real verification (not silent skip)** on every primary failure. US/CIK routes unchanged; India route confirmed unchanged via forced-`IN` R R Kabel (company_site win, no mirror). AMBIPAR safely `give_up`s (no wrong company).
 
+- **Version control established 2026-07-12 (`git init`, baseline `66e60cd`).** From here, task reports carry the actual `git diff`/`git show`. Seven commits on `main` (baseline → `93de5e0`); full per-commit rationale in `IDF_Context_and_Decisions.md` §12. This session's committed fixes (all `verify.py` unless noted):
+    - `a155977` **FY primary-year gate** — the requested year must be the document's primary "year ended … YYYY", not a prior-year comparative (fixed Avianca's FY2024 doc answering a 2023 query).
+    - `7b37498` **punctuation tokenization** — `_distinctive_tokens` splits on periods/hyphens too, fixing dotted suffixes/cores (Avianca S.A., Turkcell A.S., R R Kabel) as one root cause; "&" preserved.
+    - `8c1d849` **single-token corroboration guard** — a lone surviving token (R R Kabel→'kabel') must be backed by the full name core appearing contiguously; self-skips single-word names; multi-token untouched.
+    - `c1f7700` **LLM transport bound** (`llm_client.py`) — `_LLM_TIMEOUT_SEC=30` on genai (ms) + openai (`max_retries=1`); a hung provider can no longer stall the agent past ~30s/call.
+    - `f751c9a` **Gemini model → `gemini-flash-lite-latest`** (`llm_client.py`) — FORCED: the pinned `gemini-2.5-flash-lite` 404s for the current (newer) key's project.
+    - `93de5e0` **doc-type corroboration** — a doc must show statement content OR be full-length (≥10 pages), not merely name a report; fixed the Tullow-2024 publication-notice passing as the report.
+- **EDGAR→PDF conversion is LIVE** (built pre-git, in baseline `66e60cd`): `edgar.py convert_filing_to_pdf` renders the EDGAR HTML filing to PDF via wkhtmltopdf → `converted_pdfs/`, path cached (`cache.py pdf_path`). First conversion blocks ~8-44s per filing (then the persisted PDF is reused). **wkhtmltopdf maintenance status unchecked.**
+- **Open residuals:** doc-type **HTML-chrome false-positive** — CONFIRMED on a real Stockopedia page whose fin-nav contains "balance sheet"/"income statement" (follow-up: strip page chrome before the statement scan); R R Kabel clears the doc-type gate on the ≥10-page floor with 0 statement markers in its first 7 pages.
+- **Retraction:** the "Shopify prior-year fallback" item was a **false claim** — no prior-year `fy_candidates` expansion exists (US/CA → `[year]`; only India expands). Never in these docs; see §12.
+- **Latest clean batch (live Gemini, cache off, 2026-07-13): 11/15**; pytest 9/9. (Earlier confounded runs were Gemini quota-exhausted; resolved via a new key.)
+
 ## Next steps
 <!-- What to do next. Point Claude here when resuming a session. -->
+- **Doc-type gate HTML-chrome follow-up (new, 2026-07-13)** — `has_statement` scans the full extracted HTML, so a statement phrase in page chrome false-positives (confirmed on a real Stockopedia RNS page). Strip nav/footer/aside before the statement scan, or require statement phrasing near numeric content.
 - **Near-duplicate candidate dedup** — deferred; payoff shrank to ~3s after the body-read fix. Revisit only if a batch shows it changing a result.
 - **English-only doc-marker gap** — verify.py's `_REPORT_MARKERS`/`_QUARTERLY_MARKERS`/`_IDENTITY_MARKERS` are English only, so a correct-company/correct-year report in another language fails the doc-type gate (observed live for AMBIPAR's Portuguese filings). Own task: extend markers (PT/ES/FR/DE) or use an LLM doc-type classifier.
 - **Upstream LLM misparse** (intent.py/resolver.py) — the divergence gate is a verification-layer safety net, not a parse fix; the misparse itself is unaddressed by design.
@@ -27,7 +40,7 @@
 
 ## Decisions & notes
 <!-- Key decisions made along the way, so they survive a context reset. -->
-- Source status tracked in `sources_status.md`. EDGAR returns HTML 10-Ks (not PDF); glossy IR PDFs come from web_search.
+- Source status tracked in `sources_status.md`. EDGAR returns HTML 10-Ks/20-F/40-F; **these are now converted to PDF server-side before delivery (`edgar.py convert_filing_to_pdf` via wkhtmltopdf → `converted_pdfs/`, path cached) — see the committed-fixes note above and §12**. Glossy IR PDFs still come from web_search.
 - Precedence change (accumulate-then-sort): the graph runs its **full source chain** so multiple verified candidates can be compared. Trade-off: higher latency + more fetches (the Fix-2 latency regression, ~3s → ~60s). `MAX_WALL_SEC` (45s) bounds it, but batches near the budget remain non-deterministic.
 - **No hallucination guard exists in `intent.py`** (contrary to earlier claims/docs). The AMBIPAR-class protection is (a) `resolver._raw_token_override` (narrow, CSV-backed) and (b) the verify.py company-identity divergence gate (the durable fix). intent.py was intentionally left untouched.
 - **Body-read fix was an O(n²) accumulation bug, not a cap issue** — `BODY_READ_MAX_SEC` stayed at 15; the fix replaced `content += chunk` with a join. Root-caused by measurement, not by guessing a bigger cap.
