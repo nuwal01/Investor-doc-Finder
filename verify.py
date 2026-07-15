@@ -116,6 +116,36 @@ _STATEMENT_MARKERS: tuple[str, ...] = (
 # this codebase is EDGAR — always statement-rich — so it passes on content).
 _REPORT_MIN_PAGES = 10
 
+# Navigation / boilerplate "chrome" whose text must NOT count as the document's
+# own financial-statement content. Aggregator & IR pages carry statement phrases
+# ("balance sheet", "income statement") in nav menus and search-combobox
+# dropdowns even when the page body is only an announcement — confirmed on a real
+# Stockopedia RNS page whose <nav> AND its role=combobox/listbox both list those
+# phrases, which false-positived the has_statement corroboration below. Stripped
+# from the parsed HTML before the _STATEMENT_MARKERS scan so it reflects main
+# content. HTML-only (the PDF path never calls this); identity/FY/quarterly still
+# run against the full extracted text.
+_CHROME_TAGS: tuple[str, ...] = ("script", "style", "noscript", "nav", "header", "footer", "aside")
+_CHROME_ROLES: frozenset[str] = frozenset({
+    "navigation", "banner", "contentinfo", "search", "menu", "menubar",
+    "complementary", "combobox", "listbox", "dialog", "toolbar", "tablist",
+})
+
+
+def _html_main_text(soup) -> str:
+    """Text of ``soup`` with navigation/boilerplate chrome removed. MUTATES soup
+    (decomposes _CHROME_TAGS and any element carrying a chrome ARIA role), so
+    callers must extract any full-text they need BEFORE calling this."""
+    targets = list(soup(_CHROME_TAGS))
+    targets += [el for el in soup.select("[role]")
+                if str(el.get("role", "")).lower() in _CHROME_ROLES]
+    for t in targets:
+        try:
+            t.decompose()
+        except Exception:  # already detached (nested target) — safe to skip
+            pass
+    return soup.get_text(" ", strip=True)
+
 # Interim/quarterly self-descriptions used as the NEGATIVE document-type gate.
 # Entries are regex, matched (via _earliest) against the LEADING region only, and
 # a match REJECTS only when it precedes any _IDENTITY_MARKER there (see the gate
@@ -422,12 +452,21 @@ def _verify_html(content: bytes, intent: dict, content_type: str,
     )
     try:
         soup = BeautifulSoup(content, "html.parser")
-        text = soup.get_text(" ", strip=True)
+        text = soup.get_text(" ", strip=True)          # full text: identity / FY / quarterly (unchanged)
+        # Chrome-strip the statement-content scan only where the false-positive can
+        # occur: non-EDGAR HTML (web_search / company_site aggregator & IR pages).
+        # EDGAR returns authoritative filing content, never a nav-chromed page — the
+        # strip was confirmed to remove nothing from EDGAR (identical statement
+        # markers before/after) — so skip it there and avoid a second full get_text
+        # over multi-MB EDGAR HTML. statement_text=None => has_statement scans the
+        # full text, i.e. EDGAR's exact pre-fix behaviour.
+        statement_text = None if source == "edgar" else _html_main_text(soup)
     except Exception as exc:
         return _fail(f"HTML parse error: {exc}", content_type=content_type, is_pdf=False)
 
     return _check_text(text, intent, content_type, is_pdf=False,
-                       skip_company_check=skip_company_check, source=source)
+                       skip_company_check=skip_company_check, source=source,
+                       statement_text=statement_text)
 
 
 def _token_present(tok: str, text: str) -> bool:
@@ -496,7 +535,8 @@ def _fy_year_set(fy_candidates: list[str]) -> set[int]:
 def _check_text(text: str, intent: dict, content_type: str, is_pdf: bool,
                 skip_company_check: bool = False,
                 year_text: str | None = None, source: str = "",
-                total_pages: int | None = None) -> VerifyResult:
+                total_pages: int | None = None,
+                statement_text: str | None = None) -> VerifyResult:
     text_lower = _normalize(text)
 
     # ── Company-name check ───────────────────────────────────────────────────
@@ -705,7 +745,13 @@ def _check_text(text: str, intent: dict, content_type: str, is_pdf: bool,
         # announcements (0 statement markers, 1–2 pages) vs 12 genuine reports
         # (11 carry statement content here; R R Kabel carries none in its first 7
         # pages but is 336 pages, so it clears on length).
-        has_statement = any(m in normalized for m in _STATEMENT_MARKERS)
+        # Statement-content scan runs against chrome-stripped HTML (statement_text)
+        # when available, so nav/sidebar/combobox statement phrases can't
+        # false-corroborate; PDFs (statement_text is None) scan the same
+        # `normalized` text as before — PDF path unchanged.
+        stmt_normalized = normalized if statement_text is None else \
+            re.sub(r"\s+", " ", _normalize(statement_text)).replace("’", "'").replace("‘", "'")
+        has_statement = any(m in stmt_normalized for m in _STATEMENT_MARKERS)
         is_full_length = total_pages is not None and total_pages >= _REPORT_MIN_PAGES
         if not has_statement and not is_full_length:
             return _fail(
