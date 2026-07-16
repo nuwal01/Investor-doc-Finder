@@ -20,6 +20,21 @@ sys.path.insert(0, str(Path(__file__).parent))
 import streamlit as st
 
 from agent import run_agent
+from pdf_delivery import resolve_pdf
+
+
+def _resolve_pdf(result: dict) -> tuple[bytes, str] | None:
+    """Session-cached wrapper around pdf_delivery.resolve_pdf so Streamlit's
+    per-interaction reruns don't re-fetch (already-PDF) or re-convert (EDGAR
+    ~8-45s). The outcome — including None — is cached keyed to the result URL; a
+    genuine retry is a fresh search (new URL key)."""
+    url = result.get("url", "")
+    cache = st.session_state.setdefault("_pdf_cache", {})
+    if url in cache:
+        return cache[url]
+    out = resolve_pdf(result)
+    cache[url] = out
+    return out
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -134,7 +149,26 @@ if result is not None:
             st.markdown(f"Document: {doc_type}")
             st.markdown(source_line, unsafe_allow_html=True)
         with c2:
-            st.link_button("📥 Open / Download", url, use_container_width=True, type="primary")
+            err = None
+            try:
+                pdf = _resolve_pdf(result)
+            except Exception as exc:  # network / conversion failure — never crash
+                pdf, err = None, str(exc)
+
+            if pdf:
+                data, fname = pdf
+                st.download_button(
+                    "📥 Download PDF", data=data, file_name=fname,
+                    mime="application/pdf", use_container_width=True, type="primary",
+                )
+            else:
+                if err:
+                    st.error(f"PDF unavailable — {err}")
+                elif source == "edgar":
+                    st.error("PDF conversion unavailable (wkhtmltopdf missing or "
+                             "conversion failed).")
+                st.link_button("📥 Open original", url, use_container_width=True,
+                               type="primary")
 
         st.code(url, language="text")
 

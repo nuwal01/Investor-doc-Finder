@@ -1,19 +1,19 @@
 """
-IDF FastAPI backend (Step 8).
+IDF FastAPI backend — thin wrapper around run_agent() for the HTML frontend.
 
 Run:
   uvicorn api:app --reload --port 8000
 
+Then open http://localhost:8000/  (frontend is served from ./frontend).
+
 Endpoints:
-  GET  /              → API info
-  GET  /health        → liveness check
-  POST /api/search    → run the IDF agent; returns verified result or not-found
-  GET  /api/cache     → list the 20 most-recently cached results
-  GET  /docs          → auto-generated Swagger UI (built into FastAPI)
+  POST /search   → {"query": str} → the EXACT dict run_agent() returns, plus a
+                   "logs" key (captured pipeline trace). Both ok:true and
+                   ok:false shapes are passed through unmodified.
+  /              → static frontend (mounted last so it can't shadow /search)
 """
 
 import logging
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -22,12 +22,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from urllib.parse import quote
+
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agent import run_agent
-from cache import DB_PATH, _init
+from pdf_delivery import resolve_pdf
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,95 +39,87 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-# ── App ───────────────────────────────────────────────────────────────────────
+app = FastAPI(title="IDF — Investor Doc Finder")
 
-app = FastAPI(
-    title="IDF — Investor Doc Finder API",
-    description=(
-        "Give a free-text query like **'Apple 2022 annual report'** and get back "
-        "a verified PDF or regulatory filing URL. "
-        "Covers US (SEC EDGAR), India (Screener.in), and global companies (web search)."
-    ),
-    version="0.1.0",
-)
-
+# CORS: localhost origins for local dev (frontend is same-origin when served
+# off this app, but keep it for the dev-server case).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten for production
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── Schemas ───────────────────────────────────────────────────────────────────
-
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=3, max_length=300,
-                       example="Apple 2022 annual report")
-
-class SearchResponse(BaseModel):
-    ok:           bool
-    url:          str | None = None
-    company:      str | None = None
-    country:      str | None = None
-    fiscal_year:  int | None = None
-    matched_fy:   str | None = None
-    is_pdf:       bool       = False
-    doc_returned: str | None = None
-    source:       str | None = None
-    reason:       str | None = None   # present only when ok=False
+                       json_schema_extra={"example": "Apple 2022 annual report"})
 
 
-class CacheRow(BaseModel):
-    company_canonical: str
-    fiscal_year:       int
-    doc_type:          str
-    url:               str
-    matched_fy:        str | None
-    is_pdf:            bool
-    source:            str | None
-    verified_at:       str
+# ── Log capture (same behaviour as streamlit_app._LogCapture / _run_with_logs;
+# copied, not imported, because importing streamlit_app runs Streamlit at import).
+class _LogCapture(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records: list[str] = []
+        self.setFormatter(logging.Formatter("%(levelname)-8s [%(name)s]  %(message)s"))
+
+    def emit(self, record: logging.LogRecord):
+        self.records.append(self.format(record))
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
-
-@app.get("/", tags=["meta"])
-def root():
-    return {
-        "service": "IDF — Investor Doc Finder",
-        "version": "0.1.0",
-        "docs":    "/docs",
-        "search":  "POST /api/search",
-        "cache":   "GET  /api/cache",
-    }
-
-
-@app.get("/health", tags=["meta"])
-def health():
-    return {"status": "ok"}
+def _run_with_logs(query: str) -> tuple[dict, list[str]]:
+    capture = _LogCapture()
+    root = logging.getLogger()
+    root.addHandler(capture)
+    try:
+        result = run_agent(query)
+    except Exception as exc:
+        result = {"ok": False, "reason": str(exc)}
+    finally:
+        root.removeHandler(capture)
+    return result, capture.records
 
 
-@app.post("/api/search", response_model=SearchResponse, tags=["search"])
-def search(req: SearchRequest):
+@app.post("/search")
+def search(req: SearchRequest) -> dict:
+    """Run the agent; return run_agent()'s dict verbatim plus a 'logs' key."""
+    result, logs = _run_with_logs(req.query.strip())
+    return {**result, "logs": logs}
+
+
+@app.get("/download")
+def download(
+    url: str = Query(..., min_length=8),
+    source: str = Query(""),
+    is_pdf: bool = Query(False),
+    company: str = Query(""),
+    fy: str = Query(""),
+):
+    """Resolve a result to PDF bytes in memory and serve it as a browser download.
+
+    GET (not POST) so the endpoint is a plain, linkable/testable download URL and
+    the browser handles it natively. Reuses pdf_delivery.resolve_pdf — the SAME
+    logic the Streamlit UI uses; no conversion/fetch logic is duplicated here.
     """
-    Run the IDF agent for the given query.
+    result = {"url": url, "source": source, "is_pdf": is_pdf,
+              "company": company, "matched_fy": fy}
+    try:
+        out = resolve_pdf(result)
+    except Exception as exc:  # network / conversion failure — never crash
+        raise HTTPException(status_code=502, detail=f"Could not retrieve document: {exc}")
+    if out is None:
+        raise HTTPException(
+            status_code=422,
+            detail="No downloadable PDF for this source — open the original link instead.",
+        )
+    pdf_bytes, filename = out
+    # RFC 5987: ASCII fallback + UTF-8 name so accented filenames (e.g. Hermès) survive.
+    ascii_name = filename.encode("ascii", "ignore").decode() or "document.pdf"
+    disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": disposition})
 
-    Returns a verified document URL on success, or `ok=false` with a `reason`
-    when no document could be found/verified.  Typical latency: 5–20 s on first
-    run (network + LLM); subsequent calls for the same company/year are served
-    from the SQLite cache in < 50 ms.
-    """
-    result = run_agent(req.query)
-    return SearchResponse(**{k: result.get(k) for k in SearchResponse.model_fields})
 
-
-@app.get("/api/cache", response_model=list[CacheRow], tags=["cache"])
-def list_cache(limit: int = 20):
-    """Return the most recent `limit` verified results from the SQLite cache."""
-    _init()
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM results ORDER BY verified_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-    return [CacheRow(**dict(r)) for r in rows]
+# Mount the frontend LAST — StaticFiles at "/" would otherwise shadow /search.
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")

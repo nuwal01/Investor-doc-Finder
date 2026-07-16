@@ -1,0 +1,281 @@
+/* Tokens verbatim from DESIGN.md's frontmatter (colors / typography / rounded /
+   spacing). Prior teal/amber placeholder values are gone — see DESIGN.md at
+   repo root for the source of truth. */
+
+:root {
+  /* colors */
+  --surface: #f9f9ff;
+  --surface-dim: #d3daea;
+  --surface-bright: #f9f9ff;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #f0f3ff;
+  --surface-container: #e7eefe;
+  --surface-container-high: #e2e8f8;
+  --surface-container-highest: #dce2f3;
+  --on-surface: #151c27;
+  --on-surface-variant: #3d4947;
+  --inverse-surface: #2a313d;
+  --inverse-on-surface: #ebf1ff;
+  --outline: #6d7a77;
+  --outline-variant: #bcc9c6;
+  --surface-tint: #006a61;
+  --primary: #00685f;
+  --on-primary: #ffffff;
+  --primary-container: #008378;
+  --on-primary-container: #f4fffc;
+  --inverse-primary: #6bd8cb;
+  --secondary: #904d00;
+  --on-secondary: #ffffff;
+  --secondary-container: #fe932c;
+  --on-secondary-container: #663500;
+  --tertiary: #924628;
+  --on-tertiary: #ffffff;
+  --tertiary-container: #b05e3d;
+  --on-tertiary-container: #fffbff;
+  --error: #ba1a1a;
+  --on-error: #ffffff;
+  --error-container: #ffdad6;
+  --on-error-container: #93000a;
+  --primary-fixed: #89f5e7;
+  --primary-fixed-dim: #6bd8cb;
+  --on-primary-fixed: #00201d;
+  --on-primary-fixed-variant: #005049;
+  --secondary-fixed: #ffdcc3;
+  --secondary-fixed-dim: #ffb77d;
+  --on-secondary-fixed: #2f1500;
+  --on-secondary-fixed-variant: #6e3900;
+  --tertiary-fixed: #ffdbce;
+  --tertiary-fixed-dim: #ffb59a;
+  --on-tertiary-fixed: #370e00;
+  --on-tertiary-fixed-variant: #773215;
+  --background: #f9f9ff;
+  --on-background: #151c27;
+  --surface-variant: #dce2f3;
+
+  /* typography */
+  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --display-lg-size: 32px;        --display-lg-line: 40px;        --display-lg-tracking: -0.02em;
+  --display-lg-mobile-size: 24px; --display-lg-mobile-line: 32px; --display-lg-mobile-tracking: -0.01em;
+  --headline-md-size: 20px;       --headline-md-line: 28px;
+  --body-base-size: 16px;         --body-base-line: 24px;
+  --body-sm-size: 14px;           --body-sm-line: 20px;
+  --label-caps-size: 12px;        --label-caps-line: 16px;        --label-caps-tracking: 0.05em;
+
+  /* rounded */
+  --radius-sm:   0.25rem;
+  --radius:      0.5rem;   /* DEFAULT */
+  --radius-md:   0.75rem;
+  --radius-lg:   1rem;
+  --radius-xl:   1.5rem;
+  --radius-full: 9999px;
+
+  /* spacing */
+  --unit:            4px;
+  --gutter:          24px;
+  --margin-desktop:  40px;
+  --margin-mobile:   16px;
+  --chat-max-width:  800px;
+
+  /* elevation — Level 2 is the ONLY shadow this system allows (Tonal Layering) */
+  --elevation-2: 0px 4px 12px rgba(0, 0, 0, 0.03);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--background);
+  color: var(--on-surface);
+  line-height: 1.5;
+}
+
+.wrap {
+  max-width: var(--chat-max-width);
+  margin: 0 auto;
+  padding: 3rem var(--margin-mobile) 4rem;
+}
+@media (min-width: 640px) {
+  .wrap { padding-left: var(--margin-desktop); padding-right: var(--margin-desktop); }
+}
+
+header h1 {
+  margin: 0 0 0.35rem;
+  font-size: var(--display-lg-mobile-size);
+  line-height: var(--display-lg-mobile-line);
+  letter-spacing: var(--display-lg-mobile-tracking);
+  font-weight: 600;
+}
+@media (min-width: 640px) {
+  header h1 {
+    font-size: var(--display-lg-size);
+    line-height: var(--display-lg-line);
+    letter-spacing: var(--display-lg-tracking);
+  }
+}
+header p {
+  color: var(--on-surface-variant);
+  margin: 0 0 2rem;
+  font-size: var(--body-sm-size);
+  line-height: var(--body-sm-line);
+}
+
+/* ── Example chips ─────────────────────────────────────────── */
+.examples {
+  display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;
+}
+.chip {
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
+  border-radius: var(--radius);   /* Components: "Chips... an 8px radius" — not a pill */
+  padding: 0.4rem 0.9rem;
+  font-size: var(--body-sm-size);
+  line-height: var(--body-sm-line);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.chip:hover { border-color: var(--primary); color: var(--primary); }
+
+/* ── Search bar ────────────────────────────────────────────── */
+form.search {
+  display: flex; gap: 0.5rem;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-xl);   /* Shapes: "Chat Bubbles... rounded-xl" — chat-style input */
+  padding: 0.4rem 0.4rem 0.4rem 1rem;
+  box-shadow: var(--elevation-2);    /* Level 2: the input bar is a floating element */
+  transition: border-color 0.2s;
+}
+form.search:focus-within { border-color: var(--primary); }
+form.search input {
+  flex: 1; border: none; outline: none; background: transparent;
+  font-size: var(--body-base-size); line-height: var(--body-base-line);
+  color: var(--on-surface);
+}
+button.send {
+  border: none; cursor: pointer;
+  background: var(--primary); color: var(--on-primary);
+  border-radius: var(--radius);
+  padding: 0 1.2rem;
+  font-size: var(--body-sm-size); font-weight: 600;
+  transition: background 0.15s;
+}
+button.send:hover:not(:disabled) { background: var(--on-primary-fixed-variant); }
+button.send:disabled { opacity: 0.55; cursor: default; }
+
+/* ── States ────────────────────────────────────────────────── */
+.status {
+  margin-top: 1.5rem; color: var(--on-surface-variant);
+  font-size: var(--body-sm-size); line-height: var(--body-sm-line);
+}
+.spinner {
+  display: inline-block; width: 14px; height: 14px; margin-right: 0.5rem;
+  border: 2px solid var(--outline-variant); border-top-color: var(--primary);
+  border-radius: var(--radius-full); animation: spin 0.7s linear infinite; vertical-align: -2px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Result cards ──────────────────────────────────────────── */
+.card {
+  margin-top: 1.5rem;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);   /* Level 1 surface: border only, no shadow */
+  border-radius: var(--radius);               /* "Standard Radius: 0.5rem for cards" */
+  padding: var(--gutter);                     /* 24px gutter — exact spec match */
+  overflow: hidden;
+}
+.card.success { border-top: 3px solid var(--primary); }
+.card.giveup  { border-top: 3px solid var(--secondary); }
+
+.card h2 {
+  margin: 0 0 0.25rem;
+  font-size: var(--headline-md-size); line-height: var(--headline-md-line); font-weight: 600;
+}
+.card .subline {
+  color: var(--on-surface-variant); margin: 0 0 1rem;
+  font-size: var(--body-sm-size); line-height: var(--body-sm-line);
+}
+.country {
+  color: var(--on-surface-variant);
+  font-size: var(--label-caps-size); line-height: var(--label-caps-line);
+  font-weight: 600; letter-spacing: var(--label-caps-tracking); text-transform: uppercase;
+  margin-left: 0.4rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: var(--label-caps-size); line-height: var(--label-caps-line);
+  font-weight: 600; letter-spacing: var(--label-caps-tracking); text-transform: uppercase;
+  padding: 0.15rem 0.5rem; border-radius: var(--radius);
+  vertical-align: 2px; margin-left: 0.5rem;
+}
+.badge.pdf  { background: var(--primary-fixed);   color: var(--on-primary-fixed-variant); }
+.badge.html { background: var(--surface-container); color: var(--on-surface-variant); }
+
+.meta {
+  margin: 0.75rem 0;
+  font-size: var(--body-sm-size); line-height: var(--body-sm-line);
+}
+.meta .row { margin: 0.2rem 0; }
+.meta .label { color: var(--on-surface-variant); }
+
+.urlbox {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;   /* no mono token in DESIGN.md; kept for URL legibility */
+  font-size: var(--body-sm-size);
+  color: var(--on-surface-variant);
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.7rem; margin: 0.75rem 0;
+  word-break: break-all;
+}
+
+.btn {
+  display: inline-block; text-decoration: none; text-align: center;
+  border-radius: var(--radius);
+  padding: 0.6rem 1.2rem;
+  font-size: var(--body-sm-size); font-weight: 600;
+  border: 1px solid transparent; cursor: pointer;
+}
+.btn.primary { background: var(--primary); color: var(--on-primary); }
+.btn.primary:hover { background: var(--on-primary-fixed-variant); }
+.btn.amber { background: var(--secondary); color: var(--on-secondary); }
+.btn.neutral { background: var(--surface-container-lowest); color: var(--on-surface); border-color: var(--outline-variant); }
+
+/* Give-up fallback notices, one per confidence tier */
+.notice {
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem; margin: 1rem 0;
+  font-size: var(--body-sm-size); line-height: var(--body-sm-line);
+}
+.notice.verified   { background: var(--primary-fixed);   border: 1px solid var(--primary-fixed-dim);   color: var(--on-primary-fixed-variant); }
+.notice.uncertain  { background: var(--secondary-fixed); border: 1px solid var(--secondary-fixed-dim); color: var(--on-secondary-fixed-variant); }
+.notice.unverified { background: var(--surface-container-low); border: 1px solid var(--outline-variant); color: var(--on-surface-variant); }
+.notice .title { font-weight: 700; display: block; margin-bottom: 0.3rem; }
+
+.caption {
+  color: var(--on-surface-variant); margin-top: 0.5rem;
+  font-size: var(--body-sm-size); line-height: var(--body-sm-line);
+}
+.reason {
+  margin: 0 0 0.5rem;
+  font-size: var(--headline-md-size); line-height: var(--headline-md-line); font-weight: 600;
+}
+.suggest {
+  color: var(--on-surface-variant); margin-top: 1rem;
+  font-size: var(--body-sm-size); line-height: var(--body-sm-line);
+}
+
+/* ── Pipeline trace ────────────────────────────────────────── */
+details.trace { margin-top: 1rem; }
+details.trace summary {
+  cursor: pointer; color: var(--on-surface-variant);
+  font-size: var(--body-sm-size); line-height: var(--body-sm-line);
+}
+details.trace pre {
+  background: var(--inverse-surface); color: var(--inverse-on-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 1rem; border-radius: var(--radius); overflow-x: auto; margin-top: 0.6rem;
+}

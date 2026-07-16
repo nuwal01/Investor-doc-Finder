@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IDF — Investor Doc Finder</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>📄 Investor Doc Finder</h1>
+      <p>Enter any company + year and get a verified annual report or 10-K link.
+         Works for US (SEC EDGAR), India, and global companies (web search).</p>
+    </header>
+
+    <div class="examples" id="examples"></div>
+
+    <form class="search" id="search-form">
+      <input id="query" type="text" autocomplete="off"
+             placeholder='e.g. "Reliance Industries 2022 annual report"' />
+      <button class="send" type="submit" id="send-btn">Find</button>
+    </form>
+
+    <div id="output"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
