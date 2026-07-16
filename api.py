@@ -13,6 +13,7 @@ Endpoints:
   /              → static frontend (mounted last so it can't shadow /search)
 """
 
+import json
 import logging
 import sys
 from pathlib import Path
@@ -26,11 +27,11 @@ from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from agent import run_agent
+from agent import run_agent, run_agent_stream
 from pdf_delivery import resolve_pdf
 
 logging.basicConfig(
@@ -86,6 +87,36 @@ def search(req: SearchRequest) -> dict:
     """Run the agent; return run_agent()'s dict verbatim plus a 'logs' key."""
     result, logs = _run_with_logs(req.query.strip())
     return {**result, "logs": logs}
+
+
+@app.get("/search/stream")
+def search_stream(query: str = Query(..., min_length=3, max_length=300)):
+    """Server-Sent Events: emit a progress event as each pipeline step completes,
+    then a final 'result' event carrying the same dict POST /search returns (plus
+    'logs'). Separate GET endpoint so POST /search stays unchanged for clients
+    that don't stream; the browser consumes this with EventSource.
+    """
+    def gen():
+        # ponytail: root handler captures all logging during the run (same pattern
+        # as _run_with_logs); fine for this single-user local tool.
+        capture = _LogCapture()
+        root = logging.getLogger()
+        root.addHandler(capture)
+        try:
+            for event in run_agent_stream(query.strip()):
+                if event.get("type") == "result":
+                    event = {**event, "logs": capture.records}
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:
+            payload = {"type": "result", "result": {"ok": False, "reason": str(exc)},
+                       "logs": capture.records}
+            yield f"data: {json.dumps(payload)}\n\n"
+        finally:
+            root.removeHandler(capture)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 @app.get("/download")

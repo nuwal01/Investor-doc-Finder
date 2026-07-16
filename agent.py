@@ -480,10 +480,8 @@ def build_graph():
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def run_agent(query: str) -> dict:
-    """Run the full IDF pipeline for a free-text query."""
-    graph = build_graph()
-    initial: AgentState = {
+def _initial_state(query: str) -> "AgentState":
+    return {
         "query":               query,
         "intent":              {},
         "pending_sources":     [],
@@ -494,14 +492,79 @@ def run_agent(query: str) -> dict:
         "start_time":          0.0,
         "final_result":        None,
     }
+
+
+def run_agent(query: str) -> dict:
+    """Run the full IDF pipeline for a free-text query."""
+    graph = build_graph()
     try:
-        final_state = graph.invoke(initial)
+        final_state = graph.invoke(_initial_state(query))
         return final_state.get("final_result") or {
             "ok": False, "reason": "Agent returned no result"
         }
     except Exception as exc:
         logger.error(f"Agent raised: {exc}")
         return {"ok": False, "reason": str(exc)}
+
+
+# Plain-language status for each graph node, for a live progress display. These
+# are ADDITIVE — the internal logging.info() strings are unchanged; these are
+# derived by observing graph.stream() deltas, so no node internals are touched.
+_STEP_MESSAGES = {
+    "parse_intent":      "Understanding your query…",
+    "check_cache":       "Checking the cache…",
+    "resolve":           "Resolving the company…",
+    "route":             "Deciding where to look…",
+    "verify_candidates": "Verifying the document…",
+    "cache_write":       "Saving the verified result…",
+}
+_SOURCE_MESSAGES = {
+    "edgar":             "Checking SEC EDGAR…",
+    "nse":               "Checking NSE India…",
+    "company_site":      "Checking the company's investor-relations site…",
+    "aggregators":       "Checking report aggregators…",
+    "web_search":        "Searching the web…",
+    "web_search_mirror": "Searching report mirrors…",
+}
+
+
+def run_agent_stream(query: str):
+    """Generator variant of run_agent: yields a structured progress event as each
+    graph step completes, then a final result event. Additive — run_agent stays
+    the synchronous entry point and is unchanged.
+
+    Events (JSON-serialisable dicts):
+      {"type": "step",   "step": <node>, "message": <plain-language status>}
+      {"type": "result", "result": <same dict run_agent returns>}
+    """
+    graph = build_graph()
+    result = None
+    pending: list = []
+    try:
+        # stream_mode="updates" (default): each chunk is {node_name: state_delta}
+        # emitted right after that node runs — the real step-by-step timeline.
+        for chunk in graph.stream(_initial_state(query)):
+            for node, delta in chunk.items():
+                delta = delta or {}
+                if node == "route":
+                    pending = list(delta.get("pending_sources") or [])
+                    yield {"type": "step", "step": node, "message": _STEP_MESSAGES[node]}
+                elif node == "fetch_source":
+                    # The source just fetched is the one popped off the queue since
+                    # the previous step; name it, then track the remaining queue.
+                    src = pending[0] if pending else None
+                    pending = list(delta.get("pending_sources") or [])
+                    yield {"type": "step", "step": node,
+                           "message": _SOURCE_MESSAGES.get(src, "Searching for the document…")}
+                elif node in _STEP_MESSAGES:
+                    yield {"type": "step", "step": node, "message": _STEP_MESSAGES[node]}
+                if node in ("return_result", "give_up") and delta.get("final_result"):
+                    result = delta["final_result"]
+    except Exception as exc:
+        logger.error(f"Agent (stream) raised: {exc}")
+        result = {"ok": False, "reason": str(exc)}
+    yield {"type": "result",
+           "result": result or {"ok": False, "reason": "Agent returned no result"}}
 
 
 # ── Source dispatcher ─────────────────────────────────────────────────────────

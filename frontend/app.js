@@ -33,30 +33,55 @@ EXAMPLES.forEach((ex) => {
 
 form.addEventListener("submit", (e) => { e.preventDefault(); submit(); });
 
-async function submit() {
+// Live progress via SSE (/search/stream). The status line updates in place with
+// each pipeline step in plain language; completed steps stack below it. The full
+// raw-log trace is still rendered from the final result (renderTrace), unchanged.
+function submit() {
   const query = input.value.trim();
   if (!query) return;
 
   sendBtn.disabled = true;
   output.innerHTML =
-    '<div class="status"><span class="spinner"></span>' +
-    "Searching… this can take up to 45s on first run.</div>";
+    '<ul class="steps" id="steps" style="list-style:none;padding:0;margin:0;"></ul>';
+  const stepsEl = $("steps");
+  let done = false;
 
-  try {
-    const resp = await fetch("/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const data = await resp.json();
-    render(data);
-  } catch (err) {
+  const es = new EventSource("/search/stream?query=" + encodeURIComponent(query));
+
+  es.onmessage = (e) => {
+    let ev;
+    try { ev = JSON.parse(e.data); } catch (_) { return; }
+
+    if (ev.type === "step") {
+      // Settle the previously-active step (drop its spinner, mark it done),
+      // then append the new active step with a live spinner.
+      const prev = stepsEl.lastElementChild;
+      if (prev) prev.textContent = "✓ " + prev.dataset.msg;
+      const li = document.createElement("li");
+      li.className = "status";
+      li.style.margin = "0.35rem 0 0";
+      li.dataset.msg = ev.message;
+      li.innerHTML = '<span class="spinner"></span>' + esc(ev.message);
+      stepsEl.appendChild(li);
+    } else if (ev.type === "result") {
+      done = true;
+      es.close();
+      render({ ...ev.result, logs: ev.logs });
+      sendBtn.disabled = false;
+    }
+  };
+
+  // EventSource fires onerror both on real connection failure and when the
+  // server closes the stream. If we already rendered a result, ignore it;
+  // otherwise surface a failure card (and stop the auto-reconnect).
+  es.onerror = () => {
+    if (done) return;
+    es.close();
     output.innerHTML =
       '<div class="card giveup"><p class="reason">Request failed</p>' +
-      `<p class="suggest">${esc(err.message || err)}</p></div>`;
-  } finally {
+      '<p class="suggest">The live search stream was interrupted. Please try again.</p></div>';
     sendBtn.disabled = false;
-  }
+  };
 }
 
 function render(d) {
