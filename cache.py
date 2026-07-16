@@ -89,8 +89,8 @@ def cache_put(company: str, fiscal_year: int, doc_type: str, result: dict, inten
         c.execute(
             """
             INSERT OR REPLACE INTO results
-              (company_canonical, fiscal_year, doc_type, url, matched_fy, is_pdf, source, form_type, pdf_path, verified_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (company_canonical, fiscal_year, doc_type, url, matched_fy, is_pdf, source, form_type, verified_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 k, fiscal_year, doc_type,
@@ -99,7 +99,6 @@ def cache_put(company: str, fiscal_year: int, doc_type: str, result: dict, inten
                 1 if result.get("is_pdf") else 0,
                 result.get("source", ""),
                 result.get("form_type", ""),
-                result.get("pdf_path"),
                 now,
             ),
         )

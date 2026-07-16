@@ -24,7 +24,6 @@ If the filing happens to include a PDF, it is listed first (preferred).
 import logging
 import os
 import shutil
-from pathlib import Path
 
 import pdfkit
 import requests
@@ -36,12 +35,6 @@ logger = logging.getLogger(__name__)
 
 DATA_API = "https://data.sec.gov"
 WWW = "https://www.sec.gov"
-
-# Converted EDGAR PDFs persist here (project root, alongside cache.db) so a cache
-# hit reuses the file instead of paying the ~45s reconversion. The previous temp
-# location (%TEMP%) is cleared on reboot / by cleanup tools, which made every
-# post-reboot cache hit reconvert the largest filings.
-_PDF_CACHE_DIR = Path(__file__).resolve().parent.parent / "converted_pdfs"
 
 # EDGAR rejects requests without a meaningful User-Agent.
 EDGAR_HEADERS = {
@@ -102,13 +95,13 @@ def _strip_resources(html: str) -> str:
     return str(soup)
 
 
-def convert_filing_to_pdf(url: str) -> str | None:
-    """Fetch an EDGAR primary-doc .htm and render it to a local PDF.
+def convert_filing_to_pdf(url: str) -> bytes | None:
+    """Fetch an EDGAR primary-doc .htm and render it to PDF bytes, in memory.
 
-    Returns the local file path on success, or None if the wkhtmltopdf binary is
-    missing or conversion fails (the caller then falls back to the HTML URL). The
-    output filename is derived from the filing URL and reused if already present,
-    so a repeat request (e.g. a cache hit) doesn't re-render.
+    Returns the PDF as bytes on success, or None if the wkhtmltopdf binary is
+    missing or conversion fails (the caller then falls back to the HTML URL).
+    Nothing is written to disk — every call re-converts from scratch; caching is
+    the caller's concern (Streamlit keeps a per-session in-memory cache).
 
     ponytail: images/styling are intentionally dropped — verify.py validates
     TEXT (company / fiscal year / SEC cover markers), which conversion preserves.
@@ -119,28 +112,17 @@ def convert_filing_to_pdf(url: str) -> str | None:
         logger.warning(f"EDGAR→PDF: wkhtmltopdf not found at {_WKHTMLTOPDF!r} — returning HTML")
         return None
 
-    stem = url.rsplit("/", 1)[-1].rsplit(".", 1)[0] or "edgar_filing"
-    out_path = os.path.join(_PDF_CACHE_DIR, f"{stem}.pdf")
-    if os.path.exists(out_path):
-        logger.info(f"EDGAR→PDF: reusing persisted conversion {out_path}")
-        return out_path
-
     try:
-        os.makedirs(_PDF_CACHE_DIR, exist_ok=True)
         resp = requests.get(url, headers=EDGAR_HEADERS, timeout=30)
         resp.raise_for_status()
         html = _strip_resources(resp.text)
         cfg = pdfkit.configuration(wkhtmltopdf=_WKHTMLTOPDF)
-        pdfkit.from_string(html, out_path, configuration=cfg, options=_PDF_OPTS)
-        logger.info(f"EDGAR→PDF: converted {url} → {out_path}")
-        return out_path
+        # output_path=False makes pdfkit return the rendered PDF as bytes.
+        pdf = pdfkit.from_string(html, False, configuration=cfg, options=_PDF_OPTS)
+        logger.info(f"EDGAR→PDF: converted {url} ({len(pdf)} bytes, in-memory)")
+        return pdf
     except Exception as exc:
         logger.error(f"EDGAR→PDF: conversion failed for {url}: {exc}")
-        if os.path.exists(out_path):  # drop a partial file so a retry re-converts
-            try:
-                os.remove(out_path)
-            except OSError:
-                pass
         return None
 
 

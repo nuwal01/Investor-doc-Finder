@@ -15,7 +15,6 @@ Guardrails baked in:
 
 import csv
 import logging
-import os
 import re
 import time
 from pathlib import Path
@@ -46,7 +45,6 @@ class AgentState(TypedDict, total=False):
     verified_candidates: list             # accumulated across all fetched sources
     attempt_count:       int
     start_time:          float
-    pdf_path:            Optional[str]    # converted EDGAR PDF, set at cache_write
     final_result:        Optional[dict]
 
 
@@ -234,34 +232,17 @@ def _select_final(candidates: list[dict]) -> dict:
     )[0]
 
 
-def _winner_pdf(winner: dict, cached: Optional[str] = None) -> Optional[str]:
-    """Local PDF path for an EDGAR HTML winner (converting on first need), or None
-    for any other winner. Reuses a cached path whose file still exists; otherwise
-    (re)converts. The durable output dir + deterministic filename mean a reconvert
-    regenerates the SAME path, so a cached value stays valid across reboots."""
-    if winner.get("source") != "edgar" or winner.get("is_pdf") or not winner.get("url"):
-        return None
-    if cached and os.path.exists(cached):
-        return cached
-    from sources.edgar import convert_filing_to_pdf
-    return convert_filing_to_pdf(winner["url"])
-
-
 def _cache_write_node(state: AgentState) -> dict:
     verified_candidates = state.get("verified_candidates") or []
     # Cache the SAME candidate the precedence rule will return, not first-match.
     winner   = _select_final(verified_candidates) or state.get("verified") or {}
-    # Convert here (before the cache write) so the PDF path is stored in the cache
-    # row and a later hit reuses it instead of reconverting. Threaded to
-    # return_result via state so it isn't converted twice on this pass.
-    pdf_path = _winner_pdf(winner)
     intent   = state.get("intent") or {}
     company  = intent.get("company_name", "")
     fy       = intent.get("fiscal_year")
     dtype    = intent.get("doc_type", "annual_report")
     if company and fy and winner.get("url"):
-        cache_put(company, fy, dtype, {**winner, "pdf_path": pdf_path}, intent)
-    return {"pdf_path": pdf_path}
+        cache_put(company, fy, dtype, winner, intent)
+    return {}
 
 
 def _return_result_node(state: AgentState) -> dict:
@@ -279,17 +260,12 @@ def _return_result_node(state: AgentState) -> dict:
     # (cache-HIT path); fall back to parsing the note if it's still missing.
     form_type = winner.get("form_type") or _parse_form_type(winner.get("note", ""))
 
-    # EDGAR primary docs are XBRL .htm, never native PDF — deliver a converted
-    # PDF. On the fresh path cache_write already converted and threaded the path
-    # through state; on the cache-HIT path it rides on the cached row (reconvert
-    # only if that file is gone). None → fall back to the HTML URL.
-    pdf_path = state.get("pdf_path")
-    if pdf_path is None:
-        pdf_path = _winner_pdf(winner, cached=winner.get("pdf_path"))
-
+    # EDGAR primary docs are XBRL .htm, never native PDF — the UI converts them
+    # to PDF on demand (in memory). The label keys off source, not a converted
+    # artifact: conversion now happens lazily at download time, not here.
     if dtype == "annual_report" and is_pdf:
         doc_returned = "annual report PDF (IR)"
-    elif dtype == "annual_report" and pdf_path:
+    elif dtype == "annual_report" and winner.get("source") == "edgar":
         doc_returned = "10-K / regulatory filing (EDGAR HTML converted to PDF)"
     elif dtype == "annual_report":
         doc_returned = "10-K / regulatory filing (HTML) — glossy PDF via web_search"
@@ -302,7 +278,6 @@ def _return_result_node(state: AgentState) -> dict:
         "source":      winner.get("source", ""),
         "form_type":   form_type,
         "is_pdf":      is_pdf,
-        "pdf_path":    pdf_path,
         "doc_returned": doc_returned,
         "matched_fy":  winner.get("matched_fy"),
         "company":     intent.get("company_name", ""),
@@ -517,7 +492,6 @@ def run_agent(query: str) -> dict:
         "verified_candidates": [],
         "attempt_count":       0,
         "start_time":          0.0,
-        "pdf_path":            None,
         "final_result":        None,
     }
     try:
