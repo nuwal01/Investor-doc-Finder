@@ -6,6 +6,11 @@ cache.db
 cache.db-wal
 cache.db-shm
 
+# SQLite search-history store — runtime state (per-session log), WAL sidecars too
+history.db
+history.db-wal
+history.db-shm
+
 # Generated artifacts
 converted_pdfs/
 batch_results.json

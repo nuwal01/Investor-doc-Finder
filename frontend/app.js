@@ -20,6 +20,60 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// Anonymous session id: generated client-side, stored in localStorage (not a
+// cookie — no server round-trip or consent needed, and it's passed as a query
+// param, which EventSource requires since it can't set custom headers).
+function sessionId() {
+  let sid = localStorage.getItem("idf_session_id");
+  if (!sid) {
+    sid = (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : "s-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    localStorage.setItem("idf_session_id", sid);
+  }
+  return sid;
+}
+
+// ── Search history (per session) ─────────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const resp = await fetch("/history?session_id=" + encodeURIComponent(sessionId()));
+    const data = await resp.json();
+    renderHistory(data.history || []);
+  } catch (_) {
+    /* history is a non-critical panel — never block search on it */
+  }
+}
+
+function renderHistory(items) {
+  const panel = $("history");
+  const list = $("history-list");
+  if (!items.length) {
+    panel.hidden = true;
+    list.innerHTML = "";
+    return;
+  }
+  panel.hidden = false;
+  list.innerHTML = items.map((it) => {
+    const ok = it.status === "ok";
+    const badge = ok
+      ? '<span class="hbadge ok">found</span>'
+      : '<span class="hbadge miss">not found</span>';
+    const sub = ok && it.resolved_company
+      ? esc(it.resolved_company) + (it.matched_fy ? " · " + esc(String(it.matched_fy)) : "")
+      : "";
+    return `<li class="history-item" data-q="${esc(it.query_text)}">
+              <div class="hq">${esc(it.query_text)}</div>
+              ${sub ? `<div class="hsub">${sub}</div>` : ""}
+              ${badge}
+            </li>`;
+  }).join("");
+  // Click a past search → re-populate the box and re-run it.
+  list.querySelectorAll(".history-item").forEach((el) => {
+    el.addEventListener("click", () => { input.value = el.dataset.q; submit(); });
+  });
+}
+
 // Example chips populate + submit the box on click.
 const examplesEl = $("examples");
 EXAMPLES.forEach((ex) => {
@@ -32,6 +86,9 @@ EXAMPLES.forEach((ex) => {
 });
 
 form.addEventListener("submit", (e) => { e.preventDefault(); submit(); });
+
+// Populate the history panel for this session on load.
+loadHistory();
 
 // Live progress via SSE (/search/stream). The status line updates in place with
 // each pipeline step in plain language; completed steps stack below it. The full
@@ -46,7 +103,9 @@ function submit() {
   const stepsEl = $("steps");
   let done = false;
 
-  const es = new EventSource("/search/stream?query=" + encodeURIComponent(query));
+  const es = new EventSource(
+    "/search/stream?query=" + encodeURIComponent(query) +
+    "&session_id=" + encodeURIComponent(sessionId()));
 
   es.onmessage = (e) => {
     let ev;
@@ -68,6 +127,7 @@ function submit() {
       es.close();
       render({ ...ev.result, logs: ev.logs });
       sendBtn.disabled = false;
+      loadHistory();  // refresh the panel with this just-completed search
     }
   };
 

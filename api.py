@@ -31,6 +31,7 @@ from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import history
 from agent import run_agent, run_agent_stream
 from pdf_delivery import resolve_pdf
 
@@ -83,19 +84,29 @@ def _run_with_logs(query: str) -> tuple[dict, list[str]]:
 
 
 @app.post("/search")
-def search(req: SearchRequest) -> dict:
-    """Run the agent; return run_agent()'s dict verbatim plus a 'logs' key."""
-    result, logs = _run_with_logs(req.query.strip())
+def search(req: SearchRequest, session_id: str = Query("")) -> dict:
+    """Run the agent; return run_agent()'s dict verbatim plus a 'logs' key.
+
+    session_id (optional query param) records the search in this session's history.
+    """
+    query = req.query.strip()
+    result, logs = _run_with_logs(query)
+    history.add_entry(session_id, query, result)
     return {**result, "logs": logs}
 
 
 @app.get("/search/stream")
-def search_stream(query: str = Query(..., min_length=3, max_length=300)):
+def search_stream(query: str = Query(..., min_length=3, max_length=300),
+                  session_id: str = Query("")):
     """Server-Sent Events: emit a progress event as each pipeline step completes,
     then a final 'result' event carrying the same dict POST /search returns (plus
     'logs'). Separate GET endpoint so POST /search stays unchanged for clients
     that don't stream; the browser consumes this with EventSource.
+
+    session_id (optional query param) records the search in this session's history.
     """
+    q = query.strip()
+
     def gen():
         # ponytail: root handler captures all logging during the run (same pattern
         # as _run_with_logs); fine for this single-user local tool.
@@ -103,8 +114,9 @@ def search_stream(query: str = Query(..., min_length=3, max_length=300)):
         root = logging.getLogger()
         root.addHandler(capture)
         try:
-            for event in run_agent_stream(query.strip()):
+            for event in run_agent_stream(q):
                 if event.get("type") == "result":
+                    history.add_entry(session_id, q, event.get("result") or {})
                     event = {**event, "logs": capture.records}
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as exc:
@@ -117,6 +129,12 @@ def search_stream(query: str = Query(..., min_length=3, max_length=300)):
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no"})
+
+
+@app.get("/history")
+def history_list(session_id: str = Query(..., min_length=1)) -> dict:
+    """This session's past searches, most recent first."""
+    return {"history": history.get_history(session_id)}
 
 
 @app.get("/download")

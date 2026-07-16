@@ -279,3 +279,34 @@ details.trace pre {
   font-size: 12px;
   padding: 1rem; border-radius: var(--radius); overflow-x: auto; margin-top: 0.6rem;
 }
+
+/* ── Recent-searches panel ─────────────────────────────────── */
+.history { margin-top: 2.5rem; }
+.history-title {
+  font-size: var(--label-caps-size); line-height: var(--label-caps-line);
+  letter-spacing: var(--label-caps-tracking); text-transform: uppercase;
+  color: var(--on-surface-variant); font-weight: 600; margin: 0 0 0.75rem;
+}
+.history-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 0.5rem;
+}
+.history-item {
+  position: relative; cursor: pointer;
+  padding: 0.7rem 5.5rem 0.7rem 0.9rem;
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant); border-radius: var(--radius-md);
+}
+.history-item:hover { background: var(--surface-container); }
+.hq { font-size: var(--body-sm-size); line-height: var(--body-sm-line); color: var(--on-surface); }
+.hsub {
+  font-size: var(--label-caps-size); line-height: var(--label-caps-line);
+  color: var(--on-surface-variant); margin-top: 0.15rem;
+}
+.hbadge {
+  position: absolute; right: 0.9rem; top: 50%; transform: translateY(-50%);
+  font-size: var(--label-caps-size); line-height: var(--label-caps-line);
+  padding: 0.15rem 0.55rem; border-radius: var(--radius-full);
+}
+.hbadge.ok { background: var(--primary-container); color: var(--on-primary); }
+.hbadge.miss { background: var(--error-container); color: var(--on-error-container); }
