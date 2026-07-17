@@ -93,9 +93,30 @@ loadHistory();
 // Live progress via SSE (/search/stream). The status line updates in place with
 // each pipeline step in plain language; completed steps stack below it. The full
 // raw-log trace is still rendered from the final result (renderTrace), unchanged.
+// Backend accepts 3–300 chars (api.py: Query/Field min_length=3, max_length=300).
+// Validate here so an out-of-range query shows a specific message instead of
+// hitting the backend, getting a 422, and rendering the generic
+// "stream interrupted" card (indistinguishable from a real failure).
+const QUERY_MIN = 3, QUERY_MAX = 300;
+
+function invalidQuery(query) {
+  if (query.length < QUERY_MIN)
+    return "Query too short — include a company name and year (e.g. “Apple 2022 annual report”).";
+  if (query.length > QUERY_MAX)
+    return `Query too long — please keep it under ${QUERY_MAX} characters (yours is ${query.length}).`;
+  return null;
+}
+
 function submit() {
   const query = input.value.trim();
   if (!query) return;
+
+  const bad = invalidQuery(query);
+  if (bad) {
+    output.innerHTML =
+      '<div class="card giveup"><p class="reason">' + esc(bad) + "</p></div>";
+    return;
+  }
 
   sendBtn.disabled = true;
   output.innerHTML =
