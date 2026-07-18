@@ -87,64 +87,69 @@ _REPORT_MARKERS: tuple[str, ...] = (
     "independent auditor",   # stem: matches "auditor's"/"auditors'"/"independent auditors' report"
 )
 
-# Financial-STATEMENT content subset of _REPORT_MARKERS — phrases a document has
-# only if it actually CONTAINS statements, not merely names/announces a report.
-# Used by the positive-gate corroboration below to tell a real report from a
-# publication announcement / AGM notice that references one. Report-NAME phrases
-# ("annual report", "report and accounts", "notice of annual general meeting",
-# "integrated report", "directors' report") are deliberately excluded — those are
-# exactly what announcements carry.
-_STATEMENT_MARKERS: tuple[str, ...] = (
-    "balance sheet",
-    "statement of profit and loss",
-    "statement of financial position",
-    "statement of comprehensive income",
-    "income statement",
-    "cash flow statement",
-    "auditor's report",
-    "independent auditor",
+# ── Signal 3 (length) + Signal 5 (publisher) doc-type gates ──────────────────
+# These REPLACED the former _STATEMENT_MARKERS substring-scan corroboration.
+# Signals 1 (keyword dispersion) and 2 (numeric proximity / "maxRow") were
+# measured DEAD this session and are deliberately not used: a genuine report's
+# early pages are narrative, and its statement tables extract too variably to
+# score — R R Kabel is a real 336-page report whose 2-column INR-crore statements
+# yield a maxRow of 5, BELOW both confirmed false-accepts (Silknet 8, ijsrem 6).
+#
+# Signal 3 — page-count floor. Genuine operating-company reports run dozens–
+# hundreds of pages (13-doc batch minimum: Hikma 33); the two confirmed
+# false-accepts are short (ijsrem journal paper 7pp, Silknet investor deck 11pp).
+# Floor 15 rejects both while clearing Hikma by the widest margin among the tested
+# floors {15, 18, 20} — 18pp of headroom below the genuine minimum, i.e. the most
+# room for a borderline-short genuine report. Only meaningful for PDFs; HTML
+# (EDGAR / company_site) has no page count and is carved out (see _signal3).
+# KNOWN, ACCEPTED GAP: fund/ETF "tailored shareholder reports" are genuine ~2-page
+# annual reports and WOULD be wrongly rejected here — the fund pre-filter is a
+# separate task, not built in this change.
+_LENGTH_FLOOR_PAGES = 15
+
+# Signal 5 — publisher / journal self-identification. An academic paper names the
+# company but is NOT its report (the ijsrem "Financial Performance Analysis of
+# Infosys" paper). These markers fired UNIQUELY and correctly on that paper and
+# nowhere else in the batch. Scoped to the FRONT MATTER (masthead / abstract
+# region) only — a whole-document scan false-positives on incidental citations in
+# genuine reports. Deliberately does NOT target Silknet (Signal 3 covers that);
+# extending it to would be scope-creep back toward the dead maxRow approach.
+# (human-readable label, regex). \bissn\b also matches the "issn" inside "e-issn"
+# (hyphen is a non-word boundary), so no separate e-ISSN pattern is needed.
+_JOURNAL_MARKERS: tuple[tuple[str, str], ...] = (
+    ("ISSN", r"\bissn\b"),
+    ("DOI", r"\bdoi\b\s*:?\s*10\."),   # a real DOI, e.g. "DOI: 10.55041/IJSREM65443"
+    ("'international journal'", r"international journal"),
+    ("'this paper …'", r"this paper (?:presents|proposes|examines|studies|analys[ei]s|reviews)"),
+    ("'abstract' header", r"\babstract\b\s*[:\-—]?\s"),  # structured section header
+    ("'impact factor'", r"impact factor"),
+    ("SJIF rating", r"sjif rating"),
+    ("peer-reviewed", r"peer[ -]reviewed"),
 )
-
-# A document that only NAMES a report (no statement content in the window we see)
-# is accepted only if it is also a full-length document. Real annual reports run
-# to dozens–hundreds of pages even when their first pages are pure narrative
-# (R R Kabel: 0 statement markers in its first 7 pages but 336 pages total);
-# publication announcements / notices are 1–2 pages. Evidence (2026-07-12): the 12
-# genuine batch reports are 67–590 pages; 5 real announcements checked are 1 page
-# (PDF) / short body (HTML). 10 sits far below the genuine floor, far above the
-# announcement ceiling. Page count is only known for PDFs (None for HTML, which in
-# this codebase is EDGAR — always statement-rich — so it passes on content).
-_REPORT_MIN_PAGES = 10
-
-# Navigation / boilerplate "chrome" whose text must NOT count as the document's
-# own financial-statement content. Aggregator & IR pages carry statement phrases
-# ("balance sheet", "income statement") in nav menus and search-combobox
-# dropdowns even when the page body is only an announcement — confirmed on a real
-# Stockopedia RNS page whose <nav> AND its role=combobox/listbox both list those
-# phrases, which false-positived the has_statement corroboration below. Stripped
-# from the parsed HTML before the _STATEMENT_MARKERS scan so it reflects main
-# content. HTML-only (the PDF path never calls this); identity/FY/quarterly still
-# run against the full extracted text.
-_CHROME_TAGS: tuple[str, ...] = ("script", "style", "noscript", "nav", "header", "footer", "aside")
-_CHROME_ROLES: frozenset[str] = frozenset({
-    "navigation", "banner", "contentinfo", "search", "menu", "menubar",
-    "complementary", "combobox", "listbox", "dialog", "toolbar", "tablist",
-})
+_JOURNAL_FRONTMATTER_CHARS = 4000     # masthead/abstract region only, not whole doc
 
 
-def _html_main_text(soup) -> str:
-    """Text of ``soup`` with navigation/boilerplate chrome removed. MUTATES soup
-    (decomposes _CHROME_TAGS and any element carrying a chrome ARIA role), so
-    callers must extract any full-text they need BEFORE calling this."""
-    targets = list(soup(_CHROME_TAGS))
-    targets += [el for el in soup.select("[role]")
-                if str(el.get("role", "")).lower() in _CHROME_ROLES]
-    for t in targets:
-        try:
-            t.decompose()
-        except Exception:  # already detached (nested target) — safe to skip
-            pass
-    return soup.get_text(" ", strip=True)
+def _signal3_length_ok(total_pages: int | None) -> tuple[bool, str]:
+    """Signal 3 — length gate. A PDF must meet the page-count floor; HTML
+    (``total_pages is None``, e.g. EDGAR / company_site) is carved out as
+    authoritative and always passes. Independently disableable."""
+    if total_pages is None:
+        return True, "no page count (HTML/EDGAR) — length gate carved out"
+    if total_pages < _LENGTH_FLOOR_PAGES:
+        return False, f"{total_pages} pages < {_LENGTH_FLOOR_PAGES}-page floor"
+    return True, f"{total_pages} pages >= {_LENGTH_FLOOR_PAGES}-page floor"
+
+
+def _signal5_publisher_ok(front_matter: str) -> tuple[bool, str]:
+    """Signal 5 — publisher/journal self-identification gate. Rejects an academic
+    or journal publication (which names the company but is not its report).
+    ``front_matter`` must be the leading, normalised (lowercased, whitespace-
+    collapsed) slice of the document so an incidental citation deep in a genuine
+    report can't false-trip it. Independently disableable."""
+    hits = [label for label, pat in _JOURNAL_MARKERS if re.search(pat, front_matter)]
+    if hits:
+        return False, "journal/publisher markers in front matter: " + ", ".join(hits)
+    return True, "no journal/publisher markers"
 
 # Interim/quarterly self-descriptions used as the NEGATIVE document-type gate.
 # Entries are regex, matched (via _earliest) against the LEADING region only, and
@@ -452,21 +457,12 @@ def _verify_html(content: bytes, intent: dict, content_type: str,
     )
     try:
         soup = BeautifulSoup(content, "html.parser")
-        text = soup.get_text(" ", strip=True)          # full text: identity / FY / quarterly (unchanged)
-        # Chrome-strip the statement-content scan only where the false-positive can
-        # occur: non-EDGAR HTML (web_search / company_site aggregator & IR pages).
-        # EDGAR returns authoritative filing content, never a nav-chromed page — the
-        # strip was confirmed to remove nothing from EDGAR (identical statement
-        # markers before/after) — so skip it there and avoid a second full get_text
-        # over multi-MB EDGAR HTML. statement_text=None => has_statement scans the
-        # full text, i.e. EDGAR's exact pre-fix behaviour.
-        statement_text = None if source == "edgar" else _html_main_text(soup)
+        text = soup.get_text(" ", strip=True)          # full text: identity / FY / quarterly
     except Exception as exc:
         return _fail(f"HTML parse error: {exc}", content_type=content_type, is_pdf=False)
 
     return _check_text(text, intent, content_type, is_pdf=False,
-                       skip_company_check=skip_company_check, source=source,
-                       statement_text=statement_text)
+                       skip_company_check=skip_company_check, source=source)
 
 
 def _token_present(tok: str, text: str) -> bool:
@@ -535,8 +531,7 @@ def _fy_year_set(fy_candidates: list[str]) -> set[int]:
 def _check_text(text: str, intent: dict, content_type: str, is_pdf: bool,
                 skip_company_check: bool = False,
                 year_text: str | None = None, source: str = "",
-                total_pages: int | None = None,
-                statement_text: str | None = None) -> VerifyResult:
+                total_pages: int | None = None) -> VerifyResult:
     text_lower = _normalize(text)
 
     # ── Company-name check ───────────────────────────────────────────────────
@@ -733,31 +728,32 @@ def _check_text(text: str, intent: dict, content_type: str, is_pdf: bool,
                 is_pdf=is_pdf,
             )
 
-        # Positive-gate corroboration. The check above passes on a single marker —
-        # and the bare "annual report" substring is one — so a publication
-        # announcement / AGM notice that merely REFERENCES a report ("Publication
-        # of the 2024 Annual Report ... and Notice of Annual General Meeting")
-        # slips through as if it were the report (the Tullow-2024 case). Require the
-        # document to actually BE a report: either it shows financial-statement
-        # CONTENT in the window we see, or it is a full-length document (real
-        # reports are dozens–hundreds of pages even when their first pages are pure
-        # narrative). An announcement has neither. Confirmed against 5 real
-        # announcements (0 statement markers, 1–2 pages) vs 12 genuine reports
-        # (11 carry statement content here; R R Kabel carries none in its first 7
-        # pages but is 336 pages, so it clears on length).
-        # Statement-content scan runs against chrome-stripped HTML (statement_text)
-        # when available, so nav/sidebar/combobox statement phrases can't
-        # false-corroborate; PDFs (statement_text is None) scan the same
-        # `normalized` text as before — PDF path unchanged.
-        stmt_normalized = normalized if statement_text is None else \
-            re.sub(r"\s+", " ", _normalize(statement_text)).replace("’", "'").replace("‘", "'")
-        has_statement = any(m in stmt_normalized for m in _STATEMENT_MARKERS)
-        is_full_length = total_pages is not None and total_pages >= _REPORT_MIN_PAGES
-        if not has_statement and not is_full_length:
+        # The check above passes on a single report-NAME marker — and the bare
+        # "annual report" substring is one — so a publication announcement / AGM
+        # notice that merely REFERENCES a report slips through as if it were the
+        # report (the Tullow-2024 case). Require the document to actually BE a
+        # report via two independent HARD gates that replaced the former
+        # _STATEMENT_MARKERS corroboration (Signals 1 & 2 measured dead — see the
+        # gate definitions up top): reject if EITHER Signal 5 (publisher/journal
+        # self-identification) or Signal 3 (page-count floor) fails. Signal 5 is
+        # checked first so a journal article (ijsrem, which fails both) is reported
+        # as a publisher-gate rejection rather than merely "too short"; Silknet (a
+        # genuine-company deck, passes Signal 5) is caught by Signal 3 on length.
+        s5_ok, s5_reason = _signal5_publisher_ok(normalized[:_JOURNAL_FRONTMATTER_CHARS])
+        s3_ok, s3_reason = _signal3_length_ok(total_pages)
+        logger.info(
+            f"[DOCTYPE] source={source} pages={total_pages} "
+            f"signal5_pub={s5_ok} ({s5_reason}); signal3_len={s3_ok} ({s3_reason})"
+        )
+        if not s5_ok:
             return _fail(
-                "names an annual report but shows no financial-statement content and "
-                "is not a full-length document — likely a publication announcement / "
-                "notice, not the report itself",
+                f"Signal 5 publisher gate failed — {s5_reason}",
+                content_type=content_type,
+                is_pdf=is_pdf,
+            )
+        if not s3_ok:
+            return _fail(
+                f"Signal 3 length gate failed — {s3_reason}",
                 content_type=content_type,
                 is_pdf=is_pdf,
             )
