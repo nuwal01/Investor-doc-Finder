@@ -4,8 +4,10 @@ SQLite cache for verified results (Step 5).
 Key: (company_canonical, fiscal_year, doc_type)
 Value: url, matched_fy, is_pdf, source, verified_at
 
-company_canonical strips common suffixes and lowercases for stable matching
-across e.g. "Apple Inc." vs "Apple Inc" vs "apple".
+company_canonical accent-folds, lowercases, and drops generic/corporate/
+descriptor tokens for stable matching across surface-form variants, e.g.
+"Apple Inc." / "Apple Inc" / "apple", "ASML Holding NV" / "ASML", "Hermès" /
+"Hermes". doc_type is normalised too ("annual report" -> "annual_report").
 
 Writes also append new company/CIK rows to data/company_map.csv so future
 queries resolve without hitting the EDGAR tickers API.
@@ -13,16 +15,38 @@ queries resolve without hitting the EDGAR tickers API.
 
 import csv
 import logging
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+
+from verify import _GENERIC_TOKENS, _normalize
 
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).parent / "cache.db"
 COMPANY_MAP = Path(__file__).parent / "data" / "company_map.csv"
 
-_SUFFIXES = (" inc.", " inc", " corp.", " corp", " ltd.", " ltd", " limited", " llc", " plc")
+# Tokens dropped when building the company key. Reuses verify._GENERIC_TOKENS
+# (the vetted distinguishing-token list — already covers inc/ltd/corp/corporation/
+# company/co/india/group/industries/international/national/…) and adds only the
+# corporate forms it lacks (plc/llc) plus ENTITY-TYPE descriptors (holding/
+# holdings/pharmaceuticals/pharma) — words that denote a company's STRUCTURE, not
+# its industry, so "X Holdings"/"X" and "X Pharmaceuticals"/"X" are the same
+# issuer. 2-char corporate forms (SA/NV/AG/BV) need no listing: the len>2 filter
+# drops them.
+#
+# "oil" was DELIBERATELY EXCLUDED (investigated Prompt J). It is an INDUSTRY word
+# and a genuine discriminator: stripping it merges DISTINCT companies — "Marathon
+# Oil" collapses onto "Marathon". It was load-bearing only for the Tullow Oil <->
+# Tullow merge, and no structural guard can strip it for "Tullow Oil" while
+# sparing the identically-shaped "Marathon Oil" (both are <core> + "oil"). Losing
+# that merge is benign — at worst a duplicate cache row if the resolver returns
+# "Tullow" one run and "Tullow Oil" the next — whereas merging two real companies
+# would be a correctness bug. Industry descriptors therefore stay in the key.
+_STRIP_TOKENS: frozenset[str] = _GENERIC_TOKENS | frozenset({
+    "plc", "llc", "holding", "holdings", "pharmaceuticals", "pharma",
+})
 
 
 def _conn() -> sqlite3.Connection:
@@ -59,31 +83,57 @@ def _init() -> None:
 
 
 def _key(name: str) -> str:
-    n = name.lower().strip()
-    for sfx in _SUFFIXES:
-        if n.endswith(sfx):
-            n = n[: -len(sfx)].strip()
-    return n
+    """Canonical company key. Accent-fold + lowercase (verify._normalize), split on
+    any non-alphanumeric run, drop <=2-char tokens and generic/corporate/descriptor
+    tokens, join the rest. Folds punctuation / spacing / accent / suffix variants
+    onto one key: "ASML Holding NV"/"ASML" -> "asml"; "Avianca S.A."/"Avianca SA"
+    -> "avianca"; "R R Kabel"/"RR Kabel" -> "kabel"; "Hermès"/"Hermes" -> "hermes".
+    Industry words like "oil" are NOT stripped (see _STRIP_TOKENS), so "Tullow Oil"
+    and "Tullow" deliberately do NOT merge — the price of not merging "Marathon
+    Oil" onto "Marathon".
+
+    Never returns empty: if every token is generic and thus stripped (e.g.
+    "International Industries Ltd"), it backs off to the len>2 tokens, then to the
+    raw tokens — so an all-generic name is preserved rather than collapsing to
+    nothing."""
+    toks = re.sub(r"[^a-z0-9]+", " ", _normalize(name)).split()
+    kept = [t for t in toks if len(t) > 2 and t not in _STRIP_TOKENS]
+    if not kept:
+        kept = [t for t in toks if len(t) > 2] or toks
+    if not kept:
+        # No alphanumeric tokens at all (e.g. "!!!") — fall back to the
+        # normalized name itself so the key is never empty.
+        return _normalize(name).strip() or name
+    return " ".join(kept)
+
+
+def _norm_doc_type(doc_type: str) -> str:
+    """Canonical doc_type: lowercase, runs of whitespace -> single underscore.
+    Collapses the "annual report" / "annual_report" split onto the underscore
+    form (the majority of existing rows). "10-K" -> "10-k" (hyphen preserved)."""
+    return re.sub(r"\s+", "_", (doc_type or "").strip().lower())
 
 
 def cache_get(company: str, fiscal_year: int, doc_type: str) -> dict | None:
     _init()
     k = _key(company)
+    dt = _norm_doc_type(doc_type)
     with _conn() as c:
         row = c.execute(
             "SELECT * FROM results WHERE company_canonical=? AND fiscal_year=? AND doc_type=?",
-            (k, fiscal_year, doc_type),
+            (k, fiscal_year, dt),
         ).fetchone()
     if row:
-        logger.info(f"Cache HIT: {k!r} FY{fiscal_year} {doc_type}")
+        logger.info(f"Cache HIT: {k!r} FY{fiscal_year} {dt}")
         return dict(row)
-    logger.debug(f"Cache MISS: {k!r} FY{fiscal_year} {doc_type}")
+    logger.debug(f"Cache MISS: {k!r} FY{fiscal_year} {dt}")
     return None
 
 
 def cache_put(company: str, fiscal_year: int, doc_type: str, result: dict, intent: dict | None = None) -> None:
     _init()
     k = _key(company)
+    dt = _norm_doc_type(doc_type)
     now = datetime.now(timezone.utc).isoformat()
     with _conn() as c:
         c.execute(
@@ -93,7 +143,7 @@ def cache_put(company: str, fiscal_year: int, doc_type: str, result: dict, inten
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                k, fiscal_year, doc_type,
+                k, fiscal_year, dt,
                 result.get("url", ""),
                 result.get("matched_fy"),
                 1 if result.get("is_pdf") else 0,
