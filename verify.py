@@ -100,12 +100,22 @@ _REPORT_MARKERS: tuple[str, ...] = (
 # false-accepts are short (ijsrem journal paper 7pp, Silknet investor deck 11pp).
 # Floor 15 rejects both while clearing Hikma by the widest margin among the tested
 # floors {15, 18, 20} — 18pp of headroom below the genuine minimum, i.e. the most
-# room for a borderline-short genuine report. Only meaningful for PDFs; HTML
-# (EDGAR / company_site) has no page count and is carved out (see _signal3).
+# room for a borderline-short genuine report. Only meaningful for PDFs; HTML has
+# no page count and is carved out ONLY for authoritative regulatory sources
+# (EDGAR/NSE — see _AUTHORITATIVE_SOURCES and _signal3_length_ok) whose content is
+# a filing, not an arbitrary web page. A non-authoritative HTML source
+# (web_search, company_site) does NOT get this exemption — it has no page count
+# AND no regulatory guarantee, so Signal 3 fails closed for it instead.
 # KNOWN, ACCEPTED GAP: fund/ETF "tailored shareholder reports" are genuine ~2-page
 # annual reports and WOULD be wrongly rejected here — the fund pre-filter is a
 # separate task, not built in this change.
 _LENGTH_FLOOR_PAGES = 15
+
+# Sources whose content is an official regulatory filing rather than an arbitrary
+# web page — mirrors agent.py's _REGULATORY_SOURCES (tier-0 in _source_priority).
+# Duplicated here rather than imported to avoid a circular import (agent.py
+# imports verify.py). Only these sources get the total_pages=None exemption below.
+_AUTHORITATIVE_SOURCES: frozenset[str] = frozenset({"edgar", "nse"})
 
 # Signal 5 — publisher / journal self-identification. An academic paper names the
 # company but is NOT its report (the ijsrem "Financial Performance Analysis of
@@ -129,12 +139,25 @@ _JOURNAL_MARKERS: tuple[tuple[str, str], ...] = (
 _JOURNAL_FRONTMATTER_CHARS = 4000     # masthead/abstract region only, not whole doc
 
 
-def _signal3_length_ok(total_pages: int | None) -> tuple[bool, str]:
-    """Signal 3 — length gate. A PDF must meet the page-count floor; HTML
-    (``total_pages is None``, e.g. EDGAR / company_site) is carved out as
-    authoritative and always passes. Independently disableable."""
+def _signal3_length_ok(total_pages: int | None, source: str = "") -> tuple[bool, str]:
+    """Signal 3 — length gate. A PDF must meet the page-count floor.
+
+    HTML has no page count (``total_pages is None``). That used to auto-pass
+    for EVERY HTML candidate regardless of source, because _verify_html never
+    supplies total_pages — so a web_search/company_site press release got the
+    same free pass as an authoritative EDGAR filing, with zero length evidence
+    either way. The exemption is now restricted to authoritative regulatory
+    sources (``_AUTHORITATIVE_SOURCES`` — edgar/nse, whose content is a filing,
+    not an arbitrary web page); any other source with no page count fails
+    closed instead of auto-passing. Independently disableable."""
     if total_pages is None:
-        return True, "no page count (HTML/EDGAR) — length gate carved out"
+        if source in _AUTHORITATIVE_SOURCES:
+            return True, f"no page count ({source}, authoritative) — length gate carved out"
+        return (
+            False,
+            f"no page count and source {source!r} is not authoritative "
+            "— length gate cannot be satisfied",
+        )
     if total_pages < _LENGTH_FLOOR_PAGES:
         return False, f"{total_pages} pages < {_LENGTH_FLOOR_PAGES}-page floor"
     return True, f"{total_pages} pages >= {_LENGTH_FLOOR_PAGES}-page floor"
@@ -740,7 +763,7 @@ def _check_text(text: str, intent: dict, content_type: str, is_pdf: bool,
         # as a publisher-gate rejection rather than merely "too short"; Silknet (a
         # genuine-company deck, passes Signal 5) is caught by Signal 3 on length.
         s5_ok, s5_reason = _signal5_publisher_ok(normalized[:_JOURNAL_FRONTMATTER_CHARS])
-        s3_ok, s3_reason = _signal3_length_ok(total_pages)
+        s3_ok, s3_reason = _signal3_length_ok(total_pages, source)
         logger.info(
             f"[DOCTYPE] source={source} pages={total_pages} "
             f"signal5_pub={s5_ok} ({s5_reason}); signal3_len={s3_ok} ({s3_reason})"

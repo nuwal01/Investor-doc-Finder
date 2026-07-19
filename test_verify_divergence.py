@@ -31,7 +31,17 @@ _DOC = (
 
 
 def _check(raw_company, company_name="Ambipar"):
-    """Run the real verify gate on the company_site path with the given intent."""
+    """Run the real verify gate on the company_site path with the given intent.
+
+    total_pages=20 (>= _LENGTH_FLOOR_PAGES) is passed explicitly so Signal 3 (the
+    length gate) is satisfied regardless of source. This isolates the DIVERGENCE
+    gate under test from Signal 3: company_site is non-authoritative and (as of
+    the Signal-3 fix closing the total_pages=None free-pass for non-authoritative
+    HTML sources) would otherwise fail length with no page count of its own,
+    which is a separate concern from what this file tests. The two divergent
+    cases below reject at the earlier divergence gate regardless, so this value
+    only actually matters for the matching case.
+    """
     intent = {
         "company_name": company_name,
         "raw_company": raw_company,
@@ -41,6 +51,7 @@ def _check(raw_company, company_name="Ambipar"):
     }
     return verify._check_text(
         _DOC, intent, "text/html", is_pdf=False, source="company_site",
+        total_pages=20,
     )
 
 
