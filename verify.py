@@ -295,16 +295,31 @@ def verify(candidate: dict, intent: dict) -> VerifyResult:
     skip_co = candidate.get("skip_company_check", False)
 
     # ── Step 0: URL/filename year pre-check (fast — no download) ──────────────
-    # If the URL names a 4-digit year (19xx/20xx) that matches none of the
+    # If the FILENAME names a 4-digit year (19xx/20xx) that matches none of the
     # requested FY candidates, this is the wrong report — e.g. a "2024-Annual-
     # Report.pdf" answering a 2023 query. Reject before spending a download.
-    # Skip only when the URL names no plausible year at all. Trusted-source URLs
-    # (StockDiscovery) are keyed by a numeric company ID that can look like a
-    # year and use 2-digit filenames, so they are exempt from this check.
+    # Skip only when the filename names no plausible year at all. Trusted-source
+    # URLs (StockDiscovery) are keyed by a numeric company ID that can look like
+    # a year and use 2-digit filenames, so they are exempt from this check.
+    #
+    # Scoped to the FILENAME, not the whole URL: a path segment can carry a
+    # 4-digit number with nothing to do with fiscal year — a CMS version prefix
+    # (confirmed real case: ambipar.com's permanent "/site2020/" prefix) or a
+    # publish-date folder that legitimately differs from the year the document
+    # reports (confirmed real case: a report on FY2023 uploaded in "/2024/08/",
+    # normal publish lag). Scanning the whole URL false-rejected AMBIPAR's own
+    # genuine FY2023 report on both counts. This mirrors the quarterly-signal
+    # check just below, which already scopes to the filename for the identical
+    # reason (see its own comment) — the year check just hadn't been given the
+    # same treatment. A genuinely wrong-year filename (e.g. "Dec2024_Audited...
+    # .pdf", "...SGI-2021.pdf") is still caught; verified against the live batch.
     if not skip_co:
+        url_l = unquote(url).replace("+", " ").lower()
+        fname = url_l.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
+
         fy_candidates = intent.get("fy_candidates", [])
         fy_years  = {y for fy in fy_candidates for y in re.findall(r"\d{4}", fy)}
-        url_years = set(re.findall(r"(?:19|20)\d{2}", url))
+        url_years = set(re.findall(r"(?:19|20)\d{2}", fname))
         if url_years and fy_years and not (url_years & fy_years):
             return _fail(
                 f"URL year {sorted(url_years)} does not match requested "
@@ -316,8 +331,6 @@ def verify(candidate: dict, intent: dict) -> VerifyResult:
         # are scoped to the FILENAME so a "/q4/" directory (where 10-Ks are filed),
         # a "q4cdn.com" host, or an "/annual-reports/" path segment don't distort
         # the decision. Q-tokens cover both orders (Q1 and 1Q) and glued forms.
-        url_l = unquote(url).replace("+", " ").lower()
-        fname = url_l.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
         if not re.search(r"\bannual\b", fname):
             qm = re.search(r"(?<![a-z])(?:q[1-4]|[1-4]q)", fname)
             if qm:
