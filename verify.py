@@ -85,6 +85,17 @@ _REPORT_MARKERS: tuple[str, ...] = (
     "income statement",
     "cash flow statement",
     "independent auditor",   # stem: matches "auditor's"/"auditors'"/"independent auditors' report"
+    # Portuguese equivalents — scoped to PT only; this is the one confirmed real
+    # case (AMBIPAR's genuine Portuguese-language report failing this English-only
+    # gate despite passing identity/FY). Written pre-folded (accents stripped) to
+    # match _normalize()'s NFKD+ascii-ignore output, e.g. "relatório" -> "relatorio".
+    # Not extended to Spanish/French/German without an equally confirmed real case.
+    "relatorio anual",                       # "relatório anual" — annual report
+    "balanco patrimonial",                   # "balanço patrimonial" — balance sheet
+    "demonstracao do resultado",              # "demonstração do resultado" — income statement
+    "demonstracoes financeiras",              # "demonstrações financeiras" — financial statements
+    "demonstracao dos fluxos de caixa",       # "demonstração dos fluxos de caixa" — cash flow statement
+    "relatorio dos auditores independentes",  # "relatório dos auditores independentes" — independent auditors' report
 )
 
 # ── Signal 3 (length) + Signal 5 (publisher) doc-type gates ──────────────────
