@@ -23,6 +23,8 @@ langgraph>=0.1.0
 # Web API + frontend serving (Step 8)
 fastapi>=0.115.0
 uvicorn>=0.30.0
+# Per-IP rate limiting on the expensive agent endpoints
+slowapi>=0.1.9
 
 # Search APIs (Step 3)
 # tavily-python>=0.3.0

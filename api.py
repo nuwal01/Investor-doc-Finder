@@ -15,6 +15,7 @@ Endpoints:
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -25,11 +26,14 @@ load_dotenv()
 
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 import history
 from agent import run_agent, run_agent_stream
@@ -43,13 +47,54 @@ logging.basicConfig(
 
 app = FastAPI(title="IDF — Investor Doc Finder")
 
-# CORS: localhost origins for local dev (frontend is same-origin when served
-# off this app, but keep it for the dev-server case).
+# ── Rate limiting (slowapi) ──────────────────────────────────────────────────
+# Per-IP limit on the expensive agent endpoints (each run fans out to
+# Gemini/OpenAI/Groq + Exa/Tavily). In-memory storage: per-process — fine for a
+# single Render instance; switch to a shared store (e.g. Redis) if scaled to
+# multiple workers/instances so the limit is enforced globally.
+def _client_ip(request: Request) -> str:
+    """Real caller IP for keying the limit. Render terminates TLS at its proxy,
+    so request.client.host is the proxy's IP; the actual client is the first hop
+    in X-Forwarded-For. Fall back to the socket peer for local/direct calls.
+    (The platform sets X-Forwarded-For here; a direct caller could spoof it, but
+    this is DoS mitigation, not authentication.)"""
+    fwd = request.headers.get("x-forwarded-for")
+    return fwd.split(",")[0].strip() if fwd else get_remote_address(request)
+
+
+limiter = Limiter(key_func=_client_ip)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Standard 429 with a clear message, in the app's {ok:false, reason} shape
+    so the existing frontend error card renders it directly."""
+    return JSONResponse(
+        status_code=429,
+        content={"ok": False,
+                 "reason": "Rate limit exceeded — max 10 requests per minute per IP. "
+                           "Please wait a moment and try again."},
+    )
+
+
+# ── CORS ─────────────────────────────────────────────────────────────────────
+# Production: lock to the exact frontend origin(s) in FRONTEND_ORIGIN
+# (comma-separated) — never a wildcard. Set it in Render to your Vercel domain,
+# e.g. FRONTEND_ORIGIN=https://your-app.vercel.app. When UNSET (local dev), fall
+# back to any-port localhost; same-origin requests (frontend served by this app)
+# need no CORS anyway, so that fallback only matters for a separate cross-origin
+# dev server. Preview *.vercel.app deploys are intentionally NOT allowed.
+_frontend_origins = [o.strip() for o in os.environ.get("FRONTEND_ORIGIN", "").split(",") if o.strip()]
+if _frontend_origins:
+    _cors_origin_kwargs = {"allow_origins": _frontend_origins}
+else:
+    _cors_origin_kwargs = {"allow_origin_regex": r"http://(localhost|127\.0\.0\.1)(:\d+)?"}
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
+    **_cors_origin_kwargs,
 )
 
 
@@ -84,9 +129,11 @@ def _run_with_logs(query: str) -> tuple[dict, list[str]]:
 
 
 @app.post("/search")
-def search(req: SearchRequest, session_id: str = Query("")) -> dict:
+@limiter.limit("10/minute")
+def search(request: Request, req: SearchRequest, session_id: str = Query("")) -> dict:
     """Run the agent; return run_agent()'s dict verbatim plus a 'logs' key.
 
+    Rate-limited to 10 requests/minute per IP (the expensive LLM+search path).
     session_id (optional query param) records the search in this session's history.
     """
     query = req.query.strip()
@@ -96,13 +143,17 @@ def search(req: SearchRequest, session_id: str = Query("")) -> dict:
 
 
 @app.get("/search/stream")
-def search_stream(query: str = Query(..., min_length=3, max_length=300),
+@limiter.limit("10/minute")
+def search_stream(request: Request,
+                  query: str = Query(..., min_length=3, max_length=300),
                   session_id: str = Query("")):
     """Server-Sent Events: emit a progress event as each pipeline step completes,
     then a final 'result' event carrying the same dict POST /search returns (plus
     'logs'). Separate GET endpoint so POST /search stays unchanged for clients
     that don't stream; the browser consumes this with EventSource.
 
+    Rate-limited to 10 requests/minute per IP (same expensive agent run as
+    /search — limiting only one would leave the other as a trivial bypass).
     session_id (optional query param) records the search in this session's history.
     """
     q = query.strip()
