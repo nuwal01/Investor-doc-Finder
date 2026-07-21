@@ -66,6 +66,24 @@ limiter = Limiter(key_func=_client_ip)
 app.state.limiter = limiter
 
 
+# ── Cache-staleness warning (Fix 2 / Hole A) ─────────────────────────────────
+# Detect (don't run) a due cache sweep at startup and warn. Never sweeps inline —
+# a full sweep is minutes-scale and would block startup. Shared detection with
+# sweep_cache.py and streamlit_app.py so all three agree on "due". A periodic /
+# per-request re-check for long-lived + hot-reloaded processes (Hole B) is a
+# separate, deferred task.
+@app.on_event("startup")
+def _warn_if_cache_sweep_due() -> None:
+    log = logging.getLogger("idf.sweep")
+    try:
+        from sweep_cache import format_due_warning, sweep_status
+        warning = format_due_warning(sweep_status())
+        if warning:
+            log.warning(warning)
+    except Exception as exc:   # detection must never block startup
+        log.debug(f"cache-sweep-due check skipped: {exc}")
+
+
 @app.exception_handler(RateLimitExceeded)
 def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     """Standard 429 with a clear message, in the app's {ok:false, reason} shape

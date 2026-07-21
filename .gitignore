@@ -5,6 +5,12 @@
 cache.db
 cache.db-wal
 cache.db-shm
+# timestamped backups from cleanup_cache_keys.py / sweep_cache.py (no inline comments — gitignore treats # literally)
+cache.db.bak-*
+
+# Cache-sweep runtime state (sweep_cache.py): the last-swept marker + purge audit log
+sweep_meta.json
+cache_sweeps.log
 
 # SQLite search-history store — runtime state (per-session log), WAL sidecars too
 history.db

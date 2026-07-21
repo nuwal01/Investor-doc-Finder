@@ -44,6 +44,21 @@ st.set_page_config(
     layout="centered",
 )
 
+# ── Cache-staleness warning (Fix 2 / Hole A) ─────────────────────────────────
+# Warn (don't sweep) if verification gate logic changed since the cache was last
+# validated. Computed once per session — Streamlit reruns this script on every
+# interaction, so guard the git/fingerprint detection behind session_state.
+# Shared detection with sweep_cache.py and api.py. Never runs the sweep inline
+# (minutes-scale); the per-request/periodic re-check (Hole B) is deferred.
+if "_sweep_warning" not in st.session_state:
+    try:
+        from sweep_cache import format_due_warning, sweep_status
+        st.session_state["_sweep_warning"] = format_due_warning(sweep_status())
+    except Exception:
+        st.session_state["_sweep_warning"] = None
+if st.session_state.get("_sweep_warning"):
+    st.warning(st.session_state["_sweep_warning"])
+
 # ── Log capture ───────────────────────────────────────────────────────────────
 
 class _LogCapture(logging.Handler):
