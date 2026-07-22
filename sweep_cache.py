@@ -32,10 +32,8 @@ import hashlib
 import json
 import logging
 import re
-import shutil
 import sqlite3
 import subprocess
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -260,7 +258,16 @@ def run(apply: bool, preview: bool, since: str | None) -> None:
     if apply:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         backup = f"{cache.DB_PATH}.bak-{stamp}"
-        shutil.copy2(cache.DB_PATH, backup)
+        # SQLite online backup API — a consistent snapshot that INCLUDES any
+        # uncheckpointed WAL, unlike a live shutil.copy2 of the .db file alone
+        # (which can miss the -wal sidecar and yield an inconsistent/stale backup).
+        src = sqlite3.connect(cache.DB_PATH)
+        dst = sqlite3.connect(backup)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
         print(f"[APPLY] backed up cache.db -> {backup}")
 
     conn = sqlite3.connect(cache.DB_PATH)
@@ -318,8 +325,12 @@ def run(apply: bool, preview: bool, since: str | None) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.WARNING)
     ap = argparse.ArgumentParser(description="Commit-triggered cache resweep (Fix 2).")
-    ap.add_argument("--apply", action="store_true", help="execute: backup, re-verify, purge, advance marker")
-    ap.add_argument("--preview", action="store_true", help="live re-verify all rows, report, delete nothing")
+    # --apply and --preview are mutually exclusive: argparse rejects both together
+    # (exit 2) before run() executes, so --preview can never reach the destructive
+    # apply path. Neither given => dry-run.
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="execute: backup, re-verify, purge, advance marker")
+    mode.add_argument("--preview", action="store_true", help="live re-verify all rows, report, delete nothing")
     ap.add_argument("--all", action="store_true", help="full-scope sweep (default and only scope; explicit affirmation)")
     ap.add_argument("--since", metavar="COMMIT", help="override last-swept commit for the due check")
     args = ap.parse_args()
