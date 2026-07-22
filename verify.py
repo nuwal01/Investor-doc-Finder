@@ -142,7 +142,7 @@ _JOURNAL_MARKERS: tuple[tuple[str, str], ...] = (
     ("DOI", r"\bdoi\b\s*:?\s*10\."),   # a real DOI, e.g. "DOI: 10.55041/IJSREM65443"
     ("'international journal'", r"international journal"),
     ("'this paper …'", r"this paper (?:presents|proposes|examines|studies|analys[ei]s|reviews)"),
-    ("'abstract' header", r"\babstract\b\s*[:\-—]?\s"),  # structured section header
+    ("'abstract' header", r"\babstract\b\s*[:\-—]\s"),  # structured section header — delimiter required, not just whitespace
     ("'impact factor'", r"impact factor"),
     ("SJIF rating", r"sjif rating"),
     ("peer-reviewed", r"peer[ -]reviewed"),
