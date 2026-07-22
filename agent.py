@@ -24,6 +24,7 @@ from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
 from cache import cache_get, cache_put
+from fund_filter import fund_reject_result
 from intent import parse_intent as _parse_intent
 from resolver import resolve as _resolve
 from verify import verify as _verify
@@ -496,6 +497,13 @@ def _initial_state(query: str) -> "AgentState":
 
 def run_agent(query: str) -> dict:
     """Run the full IDF pipeline for a free-text query."""
+    # Fund/ETF pre-filter: reject before any discovery/verification (funds are out
+    # of scope; their 2-page tailored shareholder reports would false-reject on the
+    # Signal-3 length gate). Runs before the LLM parse — no cost for a fund query.
+    rejected = fund_reject_result(query)
+    if rejected is not None:
+        logger.info(f"[fund_filter] rejected fund/ETF query {query!r} — {rejected['reason'][:60]}")
+        return rejected
     graph = build_graph()
     try:
         final_state = graph.invoke(_initial_state(query))
@@ -537,6 +545,13 @@ def run_agent_stream(query: str):
       {"type": "step",   "step": <node>, "message": <plain-language status>}
       {"type": "result", "result": <same dict run_agent returns>}
     """
+    # Fund/ETF pre-filter (see run_agent): reject before any discovery. Emit only a
+    # single result event — no step events — so the UI shows the message immediately.
+    rejected = fund_reject_result(query)
+    if rejected is not None:
+        logger.info(f"[fund_filter] rejected fund/ETF query {query!r}")
+        yield {"type": "result", "result": rejected}
+        return
     graph = build_graph()
     result = None
     pending: list = []
