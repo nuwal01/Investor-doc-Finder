@@ -1,0 +1,5 @@
+# Enforce LF line endings for all text files (repo convention). Without this, a
+# Windows checkout with core.autocrlf=true rewrites text files to CRLF in the
+# working tree while the repo stores LF, flagging files as phantom-modified.
+# eol=lf keeps the working tree LF to match the repo, killing that phantom diff.
+* text=auto eol=lf

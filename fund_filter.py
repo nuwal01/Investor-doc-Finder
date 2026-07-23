@@ -45,7 +45,10 @@ _FUND_MARKERS = (
 # Street) are deliberately EXCLUDED: they file their own 10-Ks as operating cos.
 _FUND_FAMILIES = (
     r"\bishares\b", r"\bspdr\b", r"\bproshares\b", r"\bvaneck\b",
-    r"\bwisdomtree\b", r"\bflexshares\b", r"\bglobal\s+x\b", r"\bdirexion\b",
+    r"\bflexshares\b", r"\bglobal\s+x\b", r"\bdirexion\b",
+    # WisdomTree excluded: WisdomTree Inc. (NYSE: WT) is an operating company that
+    # files its own 10-K, like BlackRock/Vanguard — its ETF products still match
+    # the fund/ETF VEHICLE markers above ("... Fund", "ETF"), so those are unaffected.
 )
 
 _PATTERNS = tuple(re.compile(p, re.IGNORECASE) for p in _FUND_MARKERS + _FUND_FAMILIES)
