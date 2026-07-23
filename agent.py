@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS   = 6
 MAX_WALL_SEC   = 45
 
+# Lazy last-resort fallback sources: only fetched when the primary verified nothing
+# (see _fetch_source_node / find_web_mirror_candidates). A give_up with only these
+# still pending counts as "sources exhausted", not "still searching" (see _give_up_node).
+_LAZY_FALLBACK_SOURCES = frozenset({"web_search_mirror"})
+
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
@@ -46,6 +51,7 @@ class AgentState(TypedDict, total=False):
     verified_candidates: list             # accumulated across all fetched sources
     attempt_count:       int
     start_time:          float
+    search_cut_short:    bool             # cap cut the verify loop short mid-source
     final_result:        Optional[dict]
 
 
@@ -154,6 +160,10 @@ def _verify_node(state: AgentState) -> dict:
     # Accumulate ACROSS sources: keep every verified candidate so the final
     # selection can compare them by precedence instead of taking first-match.
     accumulated = list(state.get("verified_candidates") or [])
+    # True only if the cap cut this loop short with candidates still unverified —
+    # a genuine "ran out of time mid-search" signal give_up uses to keep the
+    # timeout label (vs. the loop completing, which means the source was exhausted).
+    cut_short = False
 
     for i, cand in enumerate(candidates):
         # Between-candidates wall-clock enforcement. _after_verify only checks
@@ -168,6 +178,7 @@ def _verify_node(state: AgentState) -> dict:
                 f"[verify] wall-clock budget spent ({elapsed:.0f}s >= {MAX_WALL_SEC}s) — "
                 f"stopping after {i}/{len(candidates)} candidate(s) from this source"
             )
+            cut_short = True
             break
         logger.info(
             f"[verify] {i+1}/{len(candidates)} (t={elapsed:.0f}s): {cand.get('url','')[:70]}"
@@ -192,7 +203,7 @@ def _verify_node(state: AgentState) -> dict:
             logger.warning(f"[verify] fail: {res['reason']}")
 
     logger.info(f"[verify] verified so far: {len(accumulated)} candidate(s)")
-    return {"verified_candidates": accumulated, "candidates": []}
+    return {"verified_candidates": accumulated, "candidates": [], "search_cut_short": cut_short}
 
 
 # ── Final-result precedence ────────────────────────────────────────────────────
@@ -384,14 +395,29 @@ def _give_up_node(state: AgentState) -> dict:
     elapsed  = time.time() - (state.get("start_time") or time.time())
     attempts = state.get("attempt_count") or 0
 
+    # A guardrail (wall-clock / max-attempts) only means "still mid-search" if real
+    # work was LEFT when it tripped: the candidate loop cut short mid-source
+    # (search_cut_short), or a PRODUCTIVE source still queued. web_search_mirror is
+    # excluded — it is the lazy last-resort fallback that only runs once the primary
+    # verified nothing, so "only the mirror remains" is effectively exhaustion, not
+    # active search. Without this, Aeromexico flips label run-to-run purely on whether
+    # its slow web_search discovery finishes just under or just over the 45s cap (and
+    # so whether the mirror gets reached) — the diagnostic showed the mirror finds
+    # nothing either way. If everything productive was already tried and the cap merely
+    # tripped on the way out, the honest outcome is a discovery gap, not a performance
+    # timeout; labeling that "timeout" wrongly implies a retry would help.
+    productive_pending = [s for s in (state.get("pending_sources") or [])
+                          if s not in _LAZY_FALLBACK_SOURCES]
+    still_searching = bool(state.get("search_cut_short")) or bool(productive_pending)
+
     if intent.get("_give_up_reason"):
         reason = intent["_give_up_reason"]
-    elif elapsed >= MAX_WALL_SEC:
+    elif elapsed >= MAX_WALL_SEC and still_searching:
         reason = f"Wall-clock timeout ({elapsed:.0f}s > {MAX_WALL_SEC}s)"
-    elif attempts >= MAX_ATTEMPTS:
+    elif attempts >= MAX_ATTEMPTS and still_searching:
         reason = f"Max attempts reached ({attempts})"
     else:
-        reason = "All sources exhausted without a verified result"
+        reason = "No verifiable annual report found for this company via current sources"
 
     final = {
         "ok":          False,
@@ -491,6 +517,7 @@ def _initial_state(query: str) -> "AgentState":
         "verified_candidates": [],
         "attempt_count":       0,
         "start_time":          0.0,
+        "search_cut_short":    False,
         "final_result":        None,
     }
 
