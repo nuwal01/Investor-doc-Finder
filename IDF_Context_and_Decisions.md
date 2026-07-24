@@ -180,3 +180,29 @@ These four commits shift IDF from a Streamlit-only tool to a shipped HTML/JS pro
 
 - The **"Build Spec" referenced in §7, §10, and PROGRESS "Next steps" (Steps E/F) does not exist as a file** in this repo — those pointers reference a document never committed here. Flagged, not created (docs-only reconciliation, not fabrication).
 - **Latest clean batch (live Gemini via the new key, cache off, 2026-07-13): 11/15.** OK: Tullow, Kosmos, Turkcell, Hermès, Sasol, Silknet, Anglo, Hikma, Shopify, ASML, R R Kabel. Fail/give_up: Avianca (wall-clock timeout — its only candidate is the FY2024 doc the FY-gate correctly rejects), Aeromexico, Tecpetrol, AMBIPAR (pre-existing hard cases). Zero doc-type-gate or single-token-guard false firings on genuine reports; pytest 9/9. This run was not LLM-degraded (prior runs were confounded by Gemini free-tier quota exhaustion, since resolved by a new key).
+
+### [RESOLVED] Silknet JSC FY2023 — accepted give_up (not a bug)
+
+**Status:** Closed. The pipeline's give_up on "Silknet 2023 annual report" is **accepted as correct behavior**, not a discovery failure to fix. No standalone FY2023 report has a stable, locatable public URL; IDF's give_up here is honest.
+
+**Decision:** Do not build a Silknet-specific discovery fix for FY2023. The full audited FY2023 figures exist only as the comparative column inside the FY2024 filing; there is no retrievable standalone FY2023 document to find. Signal-3 correctly rejects the cached 11-page investor "2023 update" deck (a results/highlights presentation, not an annual report) — that rejection stands.
+
+**Confirmed, fetched, real URLs (verified by fetch, not guessed):**
+
+| Document | URL | Verified | Covers |
+| --- | --- | --- | --- |
+| Silknet **FY2022** consolidated FS | `https://direct.euronext.com/api/PublicAnnouncements/RISDocument/Silknet%20JSC%20-%20Consolidated%20Financial%20Statements%20for%202022.pdf?id=95d38102-568c-4738-9cac-2a8fa1651aa2` | Fetched — **42pp**, full audited IFRS (auditor report + all 4 statements + notes) | FY2022 only |
+| Silknet **FY2024** consolidated FS (official) | `https://silknet.com/static/file/202504090433-silknet-consolidated-fs-2024.pdf` | Fetched — **44pp**, English, full audited IFRS | FY2024; **contains audited FY2023 comparatives** |
+| Silknet **FY2024** consolidated FS (mirror) | `https://euronewsgeorgia.com/source/documents/auditis_daskvna_1.pdf` | Fetched — **44pp**, identical FY2024 filing | FY2024 (same doc as official) |
+
+**FY2023 coverage:** FY2023's audited figures (financial position, P&L, cash flows, notes) exist **only as the comparative column inside the fetched FY2024 statements (44pp)** — there is **no confirmed standalone FY2023 document**. Existence is near-certain (Google indexes a doc titled exactly "Silknet JSC Consolidated Financial Statements for 2023"; Silknet's 2025 ESG report cites it; it sits between the two confirmed standalone filings above), but no live, locatable URL resolves to it.
+
+**Dead / inaccessible paths (do not re-walk):**
+
+- **euronewsgeorgia `/wp-content/…` mirror** (the copy Google indexed as "…for 2023"): genuine **HTTP 404**; **not in the Wayback Machine** (no snapshots).
+- **silknet.com `/static/file/`**: filenames are **12-digit timestamp-prefixed** (unguessable); the `/forinvestors` reports page is **JS-rendered** (no `static/file` links or reachable API in raw HTML); Wayback's CDX archived only the 2021 annual report and the 2024 FS — never the 2023 FS.
+- **Euronext RIS (`direct.euronext.com`)**: FY2022 confirmed live, but FY2023's required `id` UUID is not indexed anywhere, the OAM search API is behind a SPA gate (empty responses), and **Silknet's instrument no longer appears in `live.euronext.com` search** — the Eurobond appears redeemed/delisted, so the RIS reporting obligation lapsed and FY2023 may never have been filed there.
+
+**Ownership / why disclosure is thin:** Silknet JSC is a **private** subsidiary of Silk Road Group (ultimate parent Silk Road Group Holding (Malta) Ltd; not equity-listed). Its annual audited IFRS FS were published via the **Euronext Dublin GEM Eurobond RIS channel** (the Sasol/JSE-SENS analog) — but that channel appears to have lapsed with the bond, leaving only Silknet's own JS-gated site for recent years. FY2023 fell in the gap: past the reliable RIS era, and only ever mirrored at a now-dead URL.
+
+**Net:** "No fix possible / not needed." The 11pp deck is genuinely not a full annual report (correctly rejected), AND the fuller FY2023 standalone has no retrievable public URL. The give_up is the honest, correct outcome.
