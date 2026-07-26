@@ -1,6 +1,10 @@
 // IDF frontend logic. Every card field is bound live to /search JSON — nothing
 // hardcoded, no field displayed that the payload doesn't actually carry.
 
+// Backend origin. Absolute so the frontend works when hosted separately from the
+// API (e.g. static host + Render); same-origin serving via api.py still works.
+const API = "https://investor-doc-finder.onrender.com";
+
 const EXAMPLES = [
   "Apple 2022 annual report",
   "Microsoft 2023 10-K",
@@ -37,7 +41,7 @@ function sessionId() {
 // ── Search history (per session) ─────────────────────────────────────────────
 async function loadHistory() {
   try {
-    const resp = await fetch("/history?session_id=" + encodeURIComponent(sessionId()));
+    const resp = await fetch(API + "/history?session_id=" + encodeURIComponent(sessionId()));
     const data = await resp.json();
     renderHistory(data.history || []);
   } catch (_) {
@@ -125,7 +129,7 @@ function submit() {
   let done = false;
 
   const es = new EventSource(
-    "/search/stream?query=" + encodeURIComponent(query) +
+    API + "/search/stream?query=" + encodeURIComponent(query) +
     "&session_id=" + encodeURIComponent(sessionId()));
 
   es.onmessage = (e) => {
@@ -185,7 +189,7 @@ function downloadUrl(d) {
     company: d.company || "",
     fy: d.matched_fy || d.fiscal_year || "",
   });
-  return "/download?" + p.toString();
+  return API + "/download?" + p.toString();
 }
 
 // Fetch the bytes and trigger a real file download via a Blob + temporary <a
